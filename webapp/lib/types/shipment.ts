@@ -2,6 +2,7 @@ export type DeliveryMode = 'cargo' | 'white'
 export type CalculationAccuracy = 'low' | 'medium' | 'high'
 export type LeadTemperature = 'hot' | 'warm' | 'cold'
 export type ShipmentStatus = 'in_progress' | 'completed'
+export type LogistStatus = 'new' | 'contacted' | 'closed'
 
 export interface BoxDimensions {
   length_cm: number
@@ -25,6 +26,7 @@ export interface Shipment {
   telegram_username: string | null
 
   status: ShipmentStatus
+  logist_status: LogistStatus
 
   purpose: string | null
   scenario: string | null
