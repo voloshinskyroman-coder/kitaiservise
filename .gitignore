@@ -1,2 +1,13 @@
 .claude/
 .DS_Store
+
+# bots/outreach — секреты и рантайм-состояние, никогда не коммитим
+bots/outreach/.env
+bots/outreach/accounts.json
+bots/outreach/*.session
+bots/outreach/*.session-journal
+bots/outreach/outreach.db
+bots/outreach/outreach.db-*
+bots/outreach/__pycache__/
+bots/outreach/venv/
+bots/outreach/*.log

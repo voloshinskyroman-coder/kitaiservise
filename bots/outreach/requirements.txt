@@ -1,0 +1,6 @@
+telethon
+openpyxl
+qrcode
+pillow
+requests
+# anthropic  # опционально: только если задан ANTHROPIC_API_KEY (перефразирование шаблонов рассылки)

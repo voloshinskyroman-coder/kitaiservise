@@ -1,0 +1,18 @@
+[Unit]
+Description=KitaiService Outreach Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kitaiservice_outreach
+EnvironmentFile=/opt/kitaiservice_outreach/.env
+ExecStart=/opt/kitaiservice_outreach/venv/bin/python3 -u manager_daemon.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillMode=mixed
+StandardOutput=append:/opt/kitaiservice_outreach/daemon.log
+StandardError=append:/opt/kitaiservice_outreach/daemon.log
+
+[Install]
+WantedBy=multi-user.target
