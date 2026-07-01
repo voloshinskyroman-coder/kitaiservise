@@ -1,7 +1,2 @@
-.env
-*.session
-*.session-journal
-__pycache__/
-*.pyc
-*.db
-accounts.json
+.claude/
+.DS_Store
