@@ -1,11 +1,12 @@
 import Link from 'next/link'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { getPurposeLabel } from '@/lib/config/decisionTree'
-import { DELIVERY_MODE_LABEL } from '@/lib/engines/logisticEngine'
+import { DELIVERY_MODE_LABEL } from '@/lib/engines/logisticLabels'
 import type { Shipment } from '@/lib/types/shipment'
 
-export const dynamic = 'force-dynamic'
-
+export type FunnelRow = Pick<
+  Shipment,
+  'id' | 'status' | 'purpose' | 'delivery_mode' | 'answers_log' | 'telegram_user_id' | 'telegram_username' | 'created_at' | 'updated_at'
+>
 type FunnelStage = 'opened' | 'answering' | 'submitted'
 
 function getStage(s: Pick<Shipment, 'status' | 'answers_log'>): FunnelStage {
@@ -30,16 +31,7 @@ function fmt(d: string) {
   return new Date(d).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-export default async function FunnelPage() {
-  const supabase = createServerSupabaseClient()
-  const { data: shipments, error } = await supabase
-    .from('shipments')
-    .select('id, status, purpose, delivery_mode, answers_log, telegram_user_id, telegram_username, created_at, updated_at')
-    .order('created_at', { ascending: false })
-    .limit(500)
-    .returns<Pick<Shipment, 'id' | 'status' | 'purpose' | 'delivery_mode' | 'answers_log' | 'telegram_user_id' | 'telegram_username' | 'created_at' | 'updated_at'>[]>()
-
-  const rows = shipments ?? []
+export function FunnelTab({ rows }: { rows: FunnelRow[] }) {
   const counts = {
     all: rows.length,
     opened: rows.filter((s) => getStage(s) === 'opened').length,
@@ -49,14 +41,7 @@ export default async function FunnelPage() {
   const conversion = counts.all > 0 ? Math.round((counts.submitted / counts.all) * 100) : 0
 
   return (
-    <div className="min-h-screen bg-neutral-950 p-8 text-neutral-100">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Воронка Mini App</h1>
-        <Link href="/admin" className="text-sm text-neutral-400 hover:text-neutral-200">
-          ← Админка
-        </Link>
-      </div>
-
+    <div>
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           { label: 'Всего открыли', value: counts.all },
@@ -74,8 +59,6 @@ export default async function FunnelPage() {
       <p className="mb-4 text-sm text-neutral-400">
         Конверсия из открытия в заявку: <span className="font-semibold text-neutral-100">{conversion}%</span>
       </p>
-
-      {error && <p className="text-red-400">{error.message}</p>}
 
       <div className="overflow-x-auto rounded-xl border border-neutral-800">
         <table className="w-full text-left text-sm">

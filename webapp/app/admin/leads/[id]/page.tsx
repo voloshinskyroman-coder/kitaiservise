@@ -30,7 +30,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="mx-auto min-h-screen max-w-2xl bg-neutral-950 p-8 text-neutral-100">
-      <Link href="/admin/leads" className="text-sm text-neutral-400 hover:text-neutral-200">
+      <Link href="/admin" className="text-sm text-neutral-400 hover:text-neutral-200">
         ← Все лиды
       </Link>
 

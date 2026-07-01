@@ -8,6 +8,5 @@ export async function setLogistStatus(id: string, logist_status: LogistStatus) {
   const supabase = createServerSupabaseClient()
   await supabase.from('shipments').update({ logist_status }).eq('id', id)
   revalidatePath(`/admin/leads/${id}`)
-  revalidatePath('/admin/leads')
-  revalidatePath('/admin/crm')
+  revalidatePath('/admin')
 }

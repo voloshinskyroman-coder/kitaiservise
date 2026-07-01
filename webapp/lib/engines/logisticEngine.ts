@@ -2,22 +2,12 @@ import type { Shipment } from '@/lib/types/shipment'
 import { getPurposeLabel } from '@/lib/config/decisionTree'
 import { ACCURACY_LABEL } from './recommendationEngine'
 import { sendTelegramMessage } from '@/lib/telegram/sendMessage'
+import { DELIVERY_MODE_LABEL, TEMPERATURE_EMOJI, formatPrice, formatDays } from './logisticLabels'
 
-export const DELIVERY_MODE_LABEL: Record<string, string> = { cargo: 'Карго', white: 'Белая доставка' }
-export const TEMPERATURE_EMOJI: Record<string, string> = { hot: '🔥', warm: '🙂', cold: '❄️' }
+export { DELIVERY_MODE_LABEL, TEMPERATURE_EMOJI, formatPrice, formatDays }
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-export function formatPrice(shipment: Shipment): string {
-  if (shipment.estimated_price_min == null) return 'не рассчитана'
-  return `${shipment.estimated_price_min.toLocaleString('ru-RU')}–${shipment.estimated_price_max?.toLocaleString('ru-RU')} ₽`
-}
-
-export function formatDays(shipment: Shipment): string | null {
-  if (shipment.estimated_delivery_days_min == null) return null
-  return `${shipment.estimated_delivery_days_min}–${shipment.estimated_delivery_days_max} дней`
 }
 
 /**
