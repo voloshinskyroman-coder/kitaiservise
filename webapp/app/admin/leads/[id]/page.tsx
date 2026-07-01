@@ -1,21 +1,13 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { getPurposeLabel } from '@/lib/config/decisionTree'
 import { ACCURACY_LABEL } from '@/lib/engines/recommendationEngine'
 import { formatPrice, formatDays, DELIVERY_MODE_LABEL, TEMPERATURE_EMOJI } from '@/lib/engines/logisticEngine'
+import { setLogistStatus } from '@/lib/actions/shipments'
 import type { Shipment, LogistStatus } from '@/lib/types/shipment'
 
 const LOGIST_STATUS_LABEL: Record<LogistStatus, string> = { new: 'Новая', contacted: 'В работе', closed: 'Закрыта' }
-
-async function setLogistStatus(id: string, logist_status: LogistStatus) {
-  'use server'
-  const supabase = createServerSupabaseClient()
-  await supabase.from('shipments').update({ logist_status }).eq('id', id)
-  revalidatePath(`/admin/leads/${id}`)
-  revalidatePath('/admin/leads')
-}
 
 function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
   if (value == null || value === '') return null
