@@ -9,9 +9,10 @@ import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
 
-// Вопросы "Опишите товар" в ветках, где дальше реально спрашивается сертификация (CT1/CT2) —
-// после ответа запускаем AI-анализ товара (tn.md). CT0/CT3 не доходят до этого вопроса — не тратим запрос.
-const DESCRIPTION_QUESTION_IDS = new Set(['ct1_description', 'ct2_description'])
+// Единое поле "название или ссылка" во всех ветках (tn.md) — после ответа запускаем AI-анализ
+// товара: категорию для расчёта, код ТН ВЭД и документы/сертификацию теперь определяет AI,
+// а не отдельные вопросы.
+const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product', 'ct3_product'])
 
 // Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
 // даём функции запас времени сверх обычных секунд на сохранение в Supabase.
@@ -67,8 +68,8 @@ export async function POST(req: NextRequest) {
   }
 
   // AI-анализ товара (tn.md) — не блокирует ответ клиенту (сам запрос к LLM занимает секунды),
-  // дозаполняется в фоне после отправки ответа: до вопроса про сертификацию ещё несколько шагов.
-  if (DESCRIPTION_QUESTION_IDS.has(questionId)) {
+  // дозаполняется в фоне после отправки ответа: до вопросов про категорию/сертификацию ещё есть время.
+  if (PRODUCT_QUESTION_IDS.has(questionId)) {
     after(async () => {
       try {
         const analysis = await analyzeAndVerifyProduct({
@@ -80,6 +81,8 @@ export async function POST(req: NextRequest) {
           await supabase
             .from('shipments')
             .update({
+              // category клиент больше не выбирает сам — если AI его не определил, не затираем null.
+              ...(analysis.category ? { category: analysis.category } : {}),
               hs_code_suggested: analysis.hsCodeEntry ? analysis.hsCodeEntry.code : analysis.hsCode,
               hs_code_suggested_description: analysis.hsCodeEntry?.description ?? null,
               ai_confidence: analysis.confidence,

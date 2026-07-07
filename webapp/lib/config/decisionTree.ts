@@ -273,6 +273,19 @@ function parseMultiChoice(raw: string): string[] {
   }
 }
 
+const URL_PATTERN = /^(https?:\/\/|www\.)\S+/i
+
+// Одно универсальное поле "название или ссылка" (tn.md) вместо выбора категории + отдельного
+// описания — категорию для расчёта теперь определяет AI-анализ товара (см. aiProductAnalysis.ts).
+function applyProductInput(raw: string): Partial<Shipment> {
+  const trimmed = raw.trim()
+  if (!trimmed) return {}
+  if (URL_PATTERN.test(trimmed)) {
+    return { product_reference_value: trimmed, product_reference_type: 'link' }
+  }
+  return { product_description: trimmed }
+}
+
 function toNumberOrNull(raw: string): number | null {
   if (raw.trim() === '') return null
   const n = Number(raw)
@@ -328,41 +341,23 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
       ...(raw === '0' ? { needs_supplier_search: true } : {}),
     }),
     next: (_shipment, raw) => {
-      if (raw === '0') return 'ct0_category'
+      if (raw === '0') return 'ct0_product'
       if (raw === '1') return 'ct1_has'
-      if (raw === '2') return 'ct2_category'
+      if (raw === '2') return 'ct2_product'
       return 'ct3_services'
     },
   },
 
   // ───────────────────────── CLIENT TYPE 0: полный цикл поставки ─────────────────────────
 
-  ct0_category: {
-    id: 'ct0_category',
-    prompt: 'Что хотите привезти?',
-    type: 'choice',
-    options: CATEGORY_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ category: raw }),
-    next: () => 'ct0_description',
-  },
-  ct0_description: {
-    id: 'ct0_description',
-    prompt: 'Опишите товар',
-    type: 'text',
-    applyAnswer: (_shipment, raw) => ({ product_description: raw }),
-    next: () => 'ct0_reference',
-  },
   // Клиент ищет товар с нуля — поиск и проверка поставщика для этой ветки подразумеваются
   // всегда (needs_supplier_search выставлен в main_need), отдельно не спрашиваем.
-  ct0_reference: {
-    id: 'ct0_reference',
-    prompt: 'Есть ссылка на товар? Пришлите, если есть.',
+  // Категорию/код ТН ВЭД/документы дальше определяет AI-анализ (tn.md), а не отдельный выбор.
+  ct0_product: {
+    id: 'ct0_product',
+    prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({
-      product_reference_value: raw || null,
-      product_reference_type: raw ? 'link' : 'none',
-    }),
+    applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct0_budget',
   },
   ct0_budget: {
@@ -423,21 +418,13 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
       { value: 'photo', label: 'Фото товара' },
     ],
     applyAnswer: (_shipment, raw) => ({ product_reference_type: raw }),
-    next: () => 'ct1_category',
+    next: () => 'ct1_product',
   },
-  ct1_category: {
-    id: 'ct1_category',
-    prompt: 'Что хотите привезти?',
-    type: 'choice',
-    options: CATEGORY_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ category: raw }),
-    next: () => 'ct1_description',
-  },
-  ct1_description: {
-    id: 'ct1_description',
-    prompt: 'Опишите товар',
+  ct1_product: {
+    id: 'ct1_product',
+    prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
-    applyAnswer: (_shipment, raw) => ({ product_description: raw }),
+    applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct1_payment_method',
   },
   ct1_payment_method: {
@@ -581,19 +568,11 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
 
   // ───────────────────────── CLIENT TYPE 2: товар уже куплен ─────────────────────────
 
-  ct2_category: {
-    id: 'ct2_category',
-    prompt: 'Что перевозим?',
-    type: 'choice',
-    options: CATEGORY_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ category: raw }),
-    next: () => 'ct2_description',
-  },
-  ct2_description: {
-    id: 'ct2_description',
-    prompt: 'Опишите товар',
+  ct2_product: {
+    id: 'ct2_product',
+    prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
-    applyAnswer: (_shipment, raw) => ({ product_description: raw }),
+    applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct2_origin',
   },
   ct2_origin: {
@@ -744,22 +723,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'multi-choice',
     options: CT3_SERVICES_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ separate_services: parseMultiChoice(raw) }),
-    next: () => 'ct3_category',
+    next: () => 'ct3_product',
   },
-  ct3_category: {
-    id: 'ct3_category',
-    prompt: 'Что перевозим?',
-    type: 'choice',
-    options: CATEGORY_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ category: raw }),
-    next: () => 'ct3_description',
-  },
-  ct3_description: {
-    id: 'ct3_description',
-    prompt: 'Опишите товар',
+  ct3_product: {
+    id: 'ct3_product',
+    prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
     optional: true,
-    applyAnswer: (_shipment, raw) => ({ product_description: raw || null }),
+    applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct3_location',
   },
   ct3_location: {

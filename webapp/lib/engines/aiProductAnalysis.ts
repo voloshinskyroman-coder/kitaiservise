@@ -1,12 +1,15 @@
 import 'server-only'
 import { lookupHsCode, findCodesByHeading, type HsCodeEntry } from './hsCodeLookup'
+import { CATEGORY_OPTIONS } from '@/lib/config/decisionTree'
 
-// Значения должны совпадать с DOCUMENTS_WHITE_OPTIONS / NON_TARIFF_OPTIONS в decisionTree.ts —
-// это то, что реально можно предзаполнить в чек-листах квиза.
+// Значения должны совпадать с DOCUMENTS_WHITE_OPTIONS / NON_TARIFF_OPTIONS / CATEGORY_OPTIONS
+// в decisionTree.ts — это то, что реально можно сохранить в Shipment и предзаполнить в квизе.
 const DOCUMENT_VALUES = ['invoice', 'packing_list', 'contract', 'hs_code', 'certificates', 'none'] as const
 const NON_TARIFF_VALUES = ['ds', 'sstc', 'ru', 'sgr', 'eac', 'chestny_znak', 'unknown'] as const
+const CATEGORY_VALUES = CATEGORY_OPTIONS.map((o) => o.value)
 
 export interface ProductAnalysisResult {
+  category: string | null
   hsCode: string | null
   confidence: number | null
   documents: string[]
@@ -21,6 +24,7 @@ const CLASSIFY_TOOL = {
     parameters: {
       type: 'object',
       properties: {
+        category: { type: 'string', enum: CATEGORY_VALUES, description: 'Категория товара — наиболее подходящий вариант из списка' },
         hs_code: { type: 'string', description: 'Наиболее вероятный код ТН ВЭД ЕАЭС — ровно 10 цифр без точек и пробелов, например 6109100000' },
         confidence: {
           type: 'number',
@@ -37,7 +41,7 @@ const CLASSIFY_TOOL = {
           description: 'Какая сертификация или маркировка обычно требуется для этого товара',
         },
       },
-      required: ['hs_code', 'confidence', 'documents', 'non_tariff_services'],
+      required: ['category', 'hs_code', 'confidence', 'documents', 'non_tariff_services'],
     },
   },
 } as const
@@ -118,8 +122,10 @@ export async function analyzeProduct(input: {
     const rawConfidence = typeof parsed.confidence === 'number' ? parsed.confidence : null
     const confidence = rawConfidence == null ? null : Math.max(0, Math.min(100, Math.round(rawConfidence <= 1 ? rawConfidence * 100 : rawConfidence)))
     const hsCode = typeof parsed.hs_code === 'string' ? parsed.hs_code.replace(/[^\d]/g, '') : ''
+    const category = typeof parsed.category === 'string' && CATEGORY_VALUES.includes(parsed.category) ? parsed.category : null
 
     return {
+      category,
       hsCode: hsCode || null,
       confidence,
       documents: filterKnownValues(parsed.documents, DOCUMENT_VALUES),
