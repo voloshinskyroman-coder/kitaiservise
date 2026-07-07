@@ -3,7 +3,20 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 const BUCKET = 'shipment-documents'
 const MAX_SIZE_BYTES = 10 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'])
+// Excel/CSV/TXT прикрепляются и уходят логисту в Telegram как есть, без AI-разбора —
+// AI-вложение работает только для изображений (см. ATTACHMENT_QUESTION_IDS в answer/route.ts).
+const ALLOWED_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel': 'xls',
+  'text/csv': 'csv',
+  'text/plain': 'txt',
+}
 
 /** Загрузка вложения (инвойс/упаковочный лист) к сессии квиза — картинка сжата на клиенте. */
 export async function POST(req: NextRequest) {
@@ -20,7 +33,8 @@ export async function POST(req: NextRequest) {
   if (file.size > MAX_SIZE_BYTES) {
     return NextResponse.json({ error: 'Файл слишком большой (максимум 10 МБ)' }, { status: 400 })
   }
-  if (!ALLOWED_TYPES.has(file.type)) {
+  const ext = ALLOWED_EXTENSIONS[file.type]
+  if (!ext) {
     return NextResponse.json({ error: 'Неподдерживаемый формат файла' }, { status: 400 })
   }
 
@@ -31,7 +45,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Сессия не найдена или уже завершена' }, { status: 404 })
   }
 
-  const ext = file.type === 'application/pdf' ? 'pdf' : file.type.split('/')[1] || 'bin'
   const path = `${sessionId}/${Date.now()}.${ext}`
 
   const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {

@@ -391,7 +391,7 @@ export default function QuizPage() {
                         </span>
                         <input
                           type="file"
-                          accept="image/*,application/pdf"
+                          accept="image/*,application/pdf,.xlsx,.xls,.csv,.txt"
                           disabled={interactionDisabled || uploading}
                           onChange={(e) => {
                             const file = e.target.files?.[0]
