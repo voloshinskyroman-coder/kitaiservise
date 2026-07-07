@@ -376,7 +376,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
       { value: 'invoice', label: 'Инвойс' },
       { value: 'factory_contact', label: 'Контакты фабрики' },
       { value: 'commercial_offer', label: 'Коммерческое предложение' },
-      { value: 'photo', label: 'Фото товара' },
     ],
     applyAnswer: (_shipment, raw) => ({ product_reference_type: raw }),
     next: () => 'ct1_product',
