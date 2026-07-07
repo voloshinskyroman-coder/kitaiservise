@@ -324,7 +324,17 @@ export default function QuizPage() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    if (inputValue.trim()) submitAnswer(inputValue.trim())
+                    if (!inputValue.trim()) return
+                    if (question.withAttachment) {
+                      submitAnswer(
+                        JSON.stringify({
+                          product: inputValue.trim(),
+                          attachment: attachment ? { path: attachment.path, mimeType: attachment.mimeType } : null,
+                        }),
+                      )
+                    } else {
+                      submitAnswer(inputValue.trim())
+                    }
                   }}
                   className="flex gap-2"
                 >
@@ -358,79 +368,64 @@ export default function QuizPage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={interactionDisabled || !inputValue.trim()}
+                    disabled={interactionDisabled || !inputValue.trim() || uploading}
                     className="min-h-[56px] min-w-[56px] cursor-pointer rounded-2xl bg-cta px-5 font-semibold text-white transition-colors duration-200 hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {submitting ? '...' : 'Далее'}
                   </button>
                 </form>
+
+                {question.withAttachment && (
+                  <div className="flex flex-col gap-2">
+                    {!attachment ? (
+                      <label
+                        className={`flex min-h-[96px] cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border px-5 text-center transition-colors duration-200 hover:border-primary hover:bg-surface ${
+                          interactionDisabled || uploading ? 'pointer-events-none opacity-60' : ''
+                        }`}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-6 w-6 text-muted" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+                        </svg>
+                        <span className="text-sm font-medium text-muted">
+                          {uploading ? 'Загружаем...' : 'Прикрепить инвойс или упаковочный лист (необязательно)'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          disabled={interactionDisabled || uploading}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) void handleFileSelect(file)
+                            e.target.value = ''
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    ) : (
+                      <div className="flex items-center gap-3 rounded-2xl border border-primary bg-surface px-5 py-4">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} className="h-6 w-6 shrink-0 text-primary" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                        </svg>
+                        <span className="flex-1 truncate text-sm font-medium">{attachment.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setAttachment(null)}
+                          disabled={interactionDisabled}
+                          className="shrink-0 cursor-pointer text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
+                        >
+                          Убрать
+                        </button>
+                      </div>
+                    )}
+                    {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+                  </div>
+                )}
+
                 {question.optional && (
                   <button
                     type="button"
                     onClick={() => submitAnswer('')}
                     disabled={interactionDisabled}
-                    className="flex min-h-[44px] cursor-pointer items-center justify-center self-center px-4 text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
-                  >
-                    Пропустить
-                  </button>
-                )}
-              </div>
-            )}
-
-            {question.type === 'file' && (
-              <div className="flex flex-col gap-3">
-                {!attachment ? (
-                  <label
-                    className={`flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border px-5 text-center transition-colors duration-200 hover:border-primary hover:bg-surface ${
-                      interactionDisabled || uploading ? 'pointer-events-none opacity-60' : ''
-                    }`}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-7 w-7 text-muted" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
-                    </svg>
-                    <span className="text-sm font-medium text-muted">{uploading ? 'Загружаем...' : 'Выбрать файл или фото'}</span>
-                    <input
-                      type="file"
-                      accept="image/*,application/pdf"
-                      disabled={interactionDisabled || uploading}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) void handleFileSelect(file)
-                        e.target.value = ''
-                      }}
-                      className="hidden"
-                    />
-                  </label>
-                ) : (
-                  <div className="flex items-center gap-3 rounded-2xl border border-primary bg-surface px-5 py-4">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} className="h-6 w-6 shrink-0 text-primary" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                    </svg>
-                    <span className="flex-1 truncate text-sm font-medium">{attachment.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => setAttachment(null)}
-                      disabled={interactionDisabled}
-                      className="shrink-0 cursor-pointer text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
-                    >
-                      Убрать
-                    </button>
-                  </div>
-                )}
-                {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
-                <button
-                  type="button"
-                  onClick={() => attachment && submitAnswer(JSON.stringify({ path: attachment.path, mimeType: attachment.mimeType }))}
-                  disabled={interactionDisabled || uploading || !attachment}
-                  className="min-h-[56px] w-full cursor-pointer rounded-2xl bg-cta px-5 font-semibold text-white transition-colors duration-200 hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Далее
-                </button>
-                {question.optional && (
-                  <button
-                    type="button"
-                    onClick={() => submitAnswer('')}
-                    disabled={interactionDisabled || uploading}
                     className="flex min-h-[44px] cursor-pointer items-center justify-center self-center px-4 text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
                   >
                     Пропустить

@@ -13,9 +13,9 @@ import type { Shipment } from '@/lib/types/shipment'
 
 // Единое поле "название или ссылка" во всех ветках (tn.md) — после ответа запускаем AI-анализ
 // товара: категорию для расчёта, код ТН ВЭД и документы/сертификацию теперь определяет AI,
-// а не отдельные вопросы.
+// а не отдельные вопросы. Вложение (инвойс/упаковочный лист) — необязательная часть того же
+// экрана (withAttachment), поэтому оба фоновых анализа триггерятся одним и тем же questionId.
 const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product'])
-const ATTACHMENT_QUESTION_IDS = new Set(['ct0_attachment', 'ct1_attachment', 'ct2_attachment'])
 
 // Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
 // даём функции запас времени сверх обычных секунд на сохранение в Supabase.
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   // AI-пересказ вложения (инвойс/упаковочный лист) — только для изображений, PDF пока не
   // конвертируем для vision-модели. Файл в бот логисту уходит позже, при notifyLogist.
-  if (ATTACHMENT_QUESTION_IDS.has(questionId) && recalculated.attachment_path && recalculated.attachment_mime_type?.startsWith('image/')) {
+  if (PRODUCT_QUESTION_IDS.has(questionId) && recalculated.attachment_path && recalculated.attachment_mime_type?.startsWith('image/')) {
     const attachmentPath = recalculated.attachment_path
     after(async () => {
       try {

@@ -1,6 +1,6 @@
 import type { Shipment, DeliveryMode } from '@/lib/types/shipment'
 
-export type QuestionType = 'choice' | 'multi-choice' | 'number' | 'text' | 'info' | 'file'
+export type QuestionType = 'choice' | 'multi-choice' | 'number' | 'text' | 'info'
 
 export interface QuestionOption {
   value: string
@@ -18,6 +18,8 @@ export interface QuestionNode {
   optional?: boolean
   /** Для text — показывать подсказки по мере ввода (см. /api/product-suggest, Google Product Taxonomy). */
   autocomplete?: boolean
+  /** Для text — на этом же экране доп. блок "прикрепить инвойс/упаковочный лист" (необязательно). */
+  withAttachment?: boolean
   /** Для multi-choice — какие значения предзаполнить галочками (например, по результату AI-анализа товара). */
   preselect?: (shipment: Shipment) => string[]
   /** Патч в Shipment на основе сырого ответа пользователя (multi-choice приходит как JSON.stringify(string[])). */
@@ -248,16 +250,24 @@ function applyProductInput(raw: string): Partial<Shipment> {
   return { product_description: trimmed }
 }
 
-// Клиент загружает файл заранее через /api/shipment/upload и присылает сюда только результат —
-// {path, mimeType} строкой JSON (пусто, если пропустил вопрос).
-function applyAttachmentInput(raw: string): Partial<Shipment> {
-  if (!raw) return {}
+// Вложение — необязательная часть того же экрана, что и товар (withAttachment). Клиент грузит
+// файл заранее через /api/shipment/upload, а сюда шлёт JSON {product, attachment: {path, mimeType} | null}.
+function applyProductAndAttachment(raw: string): Partial<Shipment> {
   try {
     const parsed = JSON.parse(raw)
-    if (typeof parsed.path !== 'string') return {}
-    return { attachment_path: parsed.path, attachment_mime_type: typeof parsed.mimeType === 'string' ? parsed.mimeType : null }
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.product !== 'string') {
+      throw new Error('not a combined answer')
+    }
+    const productPatch = applyProductInput(parsed.product)
+    if (!parsed.attachment || typeof parsed.attachment.path !== 'string') return productPatch
+    return {
+      ...productPatch,
+      attachment_path: parsed.attachment.path,
+      attachment_mime_type: typeof parsed.attachment.mimeType === 'string' ? parsed.attachment.mimeType : null,
+    }
   } catch {
-    return {}
+    // на случай резюме старой сессии, где ответ ещё был обычной строкой без вложения
+    return applyProductInput(raw)
   }
 }
 
@@ -331,15 +341,8 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
     autocomplete: true,
-    applyAnswer: (_shipment, raw) => applyProductInput(raw),
-    next: () => 'ct0_attachment',
-  },
-  ct0_attachment: {
-    id: 'ct0_attachment',
-    prompt: 'Прикрепите инвойс или упаковочный лист, если есть.',
-    type: 'file',
-    optional: true,
-    applyAnswer: (_shipment, raw) => applyAttachmentInput(raw),
+    withAttachment: true,
+    applyAnswer: (_shipment, raw) => applyProductAndAttachment(raw),
     next: () => 'ct0_budget',
   },
   ct0_budget: {
@@ -406,15 +409,8 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
     autocomplete: true,
-    applyAnswer: (_shipment, raw) => applyProductInput(raw),
-    next: () => 'ct1_attachment',
-  },
-  ct1_attachment: {
-    id: 'ct1_attachment',
-    prompt: 'Прикрепите инвойс или упаковочный лист, если есть.',
-    type: 'file',
-    optional: true,
-    applyAnswer: (_shipment, raw) => applyAttachmentInput(raw),
+    withAttachment: true,
+    applyAnswer: (_shipment, raw) => applyProductAndAttachment(raw),
     next: () => 'ct1_payment_method',
   },
   ct1_payment_method: {
@@ -563,15 +559,8 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
     autocomplete: true,
-    applyAnswer: (_shipment, raw) => applyProductInput(raw),
-    next: () => 'ct2_attachment',
-  },
-  ct2_attachment: {
-    id: 'ct2_attachment',
-    prompt: 'Прикрепите инвойс или упаковочный лист, если есть.',
-    type: 'file',
-    optional: true,
-    applyAnswer: (_shipment, raw) => applyAttachmentInput(raw),
+    withAttachment: true,
+    applyAnswer: (_shipment, raw) => applyProductAndAttachment(raw),
     next: () => 'ct2_origin',
   },
   ct2_origin: {
