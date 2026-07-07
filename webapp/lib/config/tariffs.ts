@@ -7,8 +7,18 @@ export const CATEGORY_COEFFICIENTS: Record<string, number> = {
   clothing: 1.0,
   electronics: 1.4,
   furniture: 0.8,
+  auto_parts: 1.1,
+  equipment: 1.3,
   cosmetics: 1.2,
   other: 1.0,
+}
+
+// Плейсхолдер-курсы для конвертации стоимости товара в рубли (пошлина/НДС считаются в рублях).
+// Заменить на реальный курс ЦБ + наценку, когда появится источник котировок.
+export const FX_RATE_TO_RUB: Record<'CNY' | 'USD' | 'RUB', number> = {
+  CNY: 13,
+  USD: 95,
+  RUB: 1,
 }
 
 // Объёмный вес: сколько "весит" 1 м³ в кг при расчёте тарифа (стандартная авиа-практика).
@@ -32,7 +42,7 @@ export const DELIVERY_DAYS = {
   white: { min: 20, max: 30 },
 } as const
 
-// Диапазон "на глаз" для сценария just_curious без известного веса.
+// Диапазон "на глаз", когда вес/объём ещё не собраны.
 export const UNKNOWN_WEIGHT_FALLBACK_RANGE_RUB = { min: 3000, max: 15000 }
 
 export const SPREAD_BY_ACCURACY: Record<'high' | 'medium' | 'low', number> = {

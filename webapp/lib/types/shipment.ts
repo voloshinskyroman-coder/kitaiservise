@@ -1,8 +1,17 @@
-export type DeliveryMode = 'cargo' | 'white'
+export type DeliveryMode = 'cargo' | 'white' | 'docs_only'
 export type CalculationAccuracy = 'low' | 'medium' | 'high'
 export type LeadTemperature = 'hot' | 'warm' | 'cold'
 export type ShipmentStatus = 'in_progress' | 'completed'
 export type LogistStatus = 'new' | 'contacted' | 'closed'
+export type Currency = 'CNY' | 'USD' | 'RUB'
+export type CargoReadiness = 'ready' | 'week' | 'month' | 'unknown'
+/** Внутренний код сценария (не показывается клиенту) — определяет, по какой ветке квиза он идёт. */
+export type ClientType = 0 | 1 | 2 | 3
+export type PriorExperience = 'white' | 'cargo' | 'none'
+export type DestinationType = 'city' | 'warehouse' | 'door' | 'not_needed'
+export type PackageType = 'boxes' | 'pallets' | 'bags' | 'other'
+export type ContractHolder = 'us' | 'client' | 'unknown'
+export type Urgency = 'urgent' | 'month' | 'not_urgent'
 
 export interface BoxDimensions {
   length_cm: number
@@ -30,23 +39,55 @@ export interface Shipment {
 
   purpose: string | null
   scenario: string | null
+  client_type: ClientType | null
+  prior_experience: PriorExperience | null
 
   delivery_mode: DeliveryMode | null
   category: string | null
   product_description: string | null
+  product_reference_type: string | null
+  product_reference_value: string | null
+  product_location: string | null
+  // AI-анализ товара (tn.md) — заполняется автоматически при ответе на описание товара,
+  // логист подтверждает/исправляет код вручную (hs_code_confirmed). hs_code_suggested всегда
+  // сверен с официальным классификатором ФНС (hs_codes) — либо совпал, либо скорректирован.
+  hs_code_suggested: string | null
+  hs_code_suggested_description: string | null
+  hs_code_confirmed: string | null
+  ai_confidence: number | null
+  ai_suggested_documents: string[]
+  ai_suggested_non_tariff: string[]
   origin_city: string | null
   destination_city: string | null
+  destination_type: DestinationType | null
   supplier: string | null
   supplier_status: string | null
   payment_status: string | null
+  payment_method: string | null
+  needs_supplier_search: boolean | null
+  needs_supplier_check: 'yes' | 'no' | 'unknown' | null
 
   product_cost: number | null
+  purchase_budget: number | null
+  currency: Currency | null
   weight_kg: number | null
   volume_m3: number | null
   package_count: number | null
+  package_type: PackageType | null
   box_dimensions: PartialBoxDimensions | null
 
+  needs_money_transfer: boolean | null
+  needs_logistics_calc: boolean | null
+  cargo_readiness: CargoReadiness | null
+  certificates_note: string | null
+  customs_contract_holder: ContractHolder | null
+  logistics_method: string | null
+  urgency: Urgency | null
+  client_comment: string | null
+
   extra_services: string[]
+  separate_services: string[]
+  non_tariff_services: string[]
   documents: string[]
 
   estimated_route: string | null

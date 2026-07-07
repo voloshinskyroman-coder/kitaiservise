@@ -1,12 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { applyAnswer } from '@/lib/engines/shipmentEngine'
 import { recalculateShipment } from '@/lib/engines/recalculate'
 import { getQuestionNode, getNextQuestion } from '@/lib/engines/decisionEngine'
 import { getAccuracyHint } from '@/lib/engines/recommendationEngine'
 import { notifyLogist } from '@/lib/engines/logisticEngine'
+import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
+
+// Вопросы "Опишите товар" в ветках, где дальше реально спрашивается сертификация (CT1/CT2) —
+// после ответа запускаем AI-анализ товара (tn.md). CT0/CT3 не доходят до этого вопроса — не тратим запрос.
+const DESCRIPTION_QUESTION_IDS = new Set(['ct1_description', 'ct2_description'])
+
+// Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
+// даём функции запас времени сверх обычных секунд на сохранение в Supabase.
+export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
   const { sessionId, questionId, answer } = (await req.json()) as {
@@ -55,6 +64,34 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.error('[shipment/answer] notifyLogist failed', err)
     }
+  }
+
+  // AI-анализ товара (tn.md) — не блокирует ответ клиенту (сам запрос к LLM занимает секунды),
+  // дозаполняется в фоне после отправки ответа: до вопроса про сертификацию ещё несколько шагов.
+  if (DESCRIPTION_QUESTION_IDS.has(questionId)) {
+    after(async () => {
+      try {
+        const analysis = await analyzeAndVerifyProduct({
+          category: recalculated.category,
+          description: recalculated.product_description,
+          referenceValue: recalculated.product_reference_value,
+        })
+        if (analysis) {
+          await supabase
+            .from('shipments')
+            .update({
+              hs_code_suggested: analysis.hsCodeEntry ? analysis.hsCodeEntry.code : analysis.hsCode,
+              hs_code_suggested_description: analysis.hsCodeEntry?.description ?? null,
+              ai_confidence: analysis.confidence,
+              ai_suggested_documents: analysis.documents,
+              ai_suggested_non_tariff: analysis.nonTariffServices,
+            })
+            .eq('id', sessionId)
+        }
+      } catch (err) {
+        console.error('[shipment/answer] analyzeProduct background failed', err)
+      }
+    })
   }
 
   const hint = getAccuracyHint(recalculated.calculation_accuracy ?? 'low', missingFieldLabels)
