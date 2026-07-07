@@ -85,19 +85,6 @@ const DELIVERY_MODE_FORCED_OPTIONS: QuestionOption[] = [
   { value: 'cargo', label: 'Карго' },
 ]
 
-const DELIVERY_MODE_OPTIONS_CT3: QuestionOption[] = [
-  { value: 'white', label: 'Официальная доставка с таможенным оформлением (белая доставка)' },
-  { value: 'cargo', label: 'Упрощённая доставка (карго)' },
-  { value: 'docs_only', label: 'Только документы/оформление' },
-  { value: 'unknown', label: 'Не знаю' },
-]
-
-const DELIVERY_MODE_FORCED_OPTIONS_CT3: QuestionOption[] = [
-  { value: 'white', label: 'Белая доставка' },
-  { value: 'cargo', label: 'Карго' },
-  { value: 'docs_only', label: 'Только документы/оформление' },
-]
-
 const MODE_EXPLAINER_PROMPT =
   'Карго — быстрее и дешевле, но без полного таможенного оформления. Белая доставка — с документами и таможенным оформлением, дольше и дороже, зато полностью законно и с чеками. Что выберете?'
 
@@ -112,11 +99,6 @@ const DESTINATION_TYPE_OPTIONS: QuestionOption[] = [
   { value: 'city', label: 'Город РФ' },
   { value: 'warehouse', label: 'До склада' },
   { value: 'door', label: 'До двери' },
-]
-
-const CT3_DESTINATION_TYPE_OPTIONS: QuestionOption[] = [
-  ...DESTINATION_TYPE_OPTIONS,
-  { value: 'not_needed', label: 'Не нужно доставлять' },
 ]
 
 export const DOCUMENTS_WHITE_OPTIONS: QuestionOption[] = [
@@ -205,24 +187,6 @@ export const EXTRA_SERVICES_OPTIONS: QuestionOption[] = [
   { value: 'storage', label: 'Хранение' },
 ]
 
-const CT3_SERVICES_OPTIONS: QuestionOption[] = [
-  { value: 'export_clearance_cn', label: 'Экспортное оформление в Китае' },
-  { value: 'logistics', label: 'Логистика' },
-  { value: 'customs_clearance', label: 'Таможенное оформление' },
-  { value: 'certification', label: 'Сертификация' },
-  { value: 'eac_marking', label: 'Маркировка EAC' },
-  { value: 'chestny_znak_marking', label: 'Маркировка «Честный знак»' },
-  { value: 'door_delivery', label: 'Доставка до двери' },
-  { value: 'consultation', label: 'Консультация' },
-]
-
-const CT3_LOCATION_OPTIONS: QuestionOption[] = [
-  { value: 'china', label: 'В Китае' },
-  { value: 'in_transit', label: 'Уже в пути' },
-  { value: 'in_russia', label: 'Уже в России' },
-  { value: 'other', label: 'Другое' },
-]
-
 const CT3_EXPORT_DOCS_OPTIONS: QuestionOption[] = [
   { value: 'export_declaration', label: 'Экспортная декларация' },
   { value: 'invoice', label: 'Счёт-фактура' },
@@ -240,12 +204,8 @@ const CT3_CUSTOMS_DOCS_OPTIONS: QuestionOption[] = [
   { value: 'unknown', label: 'Не знаю' },
 ]
 
-// Подмножество NON_TARIFF_OPTIONS — EAC и "Честный знак" в CT3 уже выбираются
-// отдельно на шаге ct3_services, здесь их переспрашивать не нужно.
-const CT3_CERTIFICATION_VALUES = new Set(['ds', 'sstc', 'ru', 'sgr', 'unknown'])
-const CT3_CERTIFICATION_OPTIONS: QuestionOption[] = NON_TARIFF_OPTIONS.filter((o) => CT3_CERTIFICATION_VALUES.has(o.value))
-
-// documents может прийти из разных наборов опций (белая/карго/экспорт/таможня для CT3) —
+// documents может прийти из разных наборов опций (белая/карго/экспорт/таможня — исторические
+// заявки CT3, ветка убрана из активного дерева) —
 // объединяем для единого поиска лейбла в карточке логиста/админке.
 function mergeOptionsByValue(...lists: QuestionOption[][]): QuestionOption[] {
   const byValue = new Map<string, QuestionOption>()
@@ -329,10 +289,9 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Что вам сейчас нужно?',
     type: 'choice',
     options: [
-      { value: '0', label: 'Полный цикл поставки — от поиска поставщика до доставки' },
+      { value: '0', label: 'Полный цикл поставки — от поиска поставщика, доставки и таможенного оформления' },
       { value: '1', label: 'Нашёл товар — нужна помощь с оплатой и доставкой' },
       { value: '2', label: 'Товар уже куплен — нужна доставка и оформление' },
-      { value: '3', label: 'Нужны отдельные услуги — экспорт, документы или логистика' },
     ],
     applyAnswer: (_shipment, raw) => ({
       client_type: Number(raw) as Shipment['client_type'],
@@ -345,8 +304,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     next: (_shipment, raw) => {
       if (raw === '0') return 'ct0_product'
       if (raw === '1') return 'ct1_has'
-      if (raw === '2') return 'ct2_product'
-      return 'ct3_services'
+      return 'ct2_product'
     },
   },
 
@@ -712,153 +670,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_extra_services: {
     id: 'ct2_extra_services',
-    prompt: 'Нужны дополнительные услуги?',
-    type: 'multi-choice',
-    optional: true,
-    options: EXTRA_SERVICES_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ extra_services: parseMultiChoice(raw) }),
-    next: () => null,
-  },
-
-  // ───────────────────────── CLIENT TYPE 3: нужны отдельные услуги ─────────────────────────
-
-  ct3_services: {
-    id: 'ct3_services',
-    prompt: 'Какие услуги нужны? Можно выбрать несколько.',
-    type: 'multi-choice',
-    options: CT3_SERVICES_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ separate_services: parseMultiChoice(raw) }),
-    next: () => 'ct3_product',
-  },
-  ct3_product: {
-    id: 'ct3_product',
-    prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
-    type: 'text',
-    optional: true,
-    autocomplete: true,
-    applyAnswer: (_shipment, raw) => applyProductInput(raw),
-    next: () => 'ct3_location',
-  },
-  ct3_location: {
-    id: 'ct3_location',
-    prompt: 'Где находится товар?',
-    type: 'choice',
-    options: CT3_LOCATION_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ product_location: raw }),
-    next: () => 'ct3_destination_type',
-  },
-  ct3_destination_type: {
-    id: 'ct3_destination_type',
-    prompt: 'Куда доставить?',
-    type: 'choice',
-    options: CT3_DESTINATION_TYPE_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ destination_type: raw as Shipment['destination_type'] }),
-    next: (_shipment, raw) => (raw === 'not_needed' ? 'ct3_delivery_mode' : 'ct3_destination_city'),
-  },
-  ct3_destination_city: {
-    id: 'ct3_destination_city',
-    prompt: 'Уточните город',
-    type: 'text',
-    applyAnswer: (_shipment, raw) => ({ destination_city: raw }),
-    next: () => 'ct3_delivery_mode',
-  },
-  ct3_delivery_mode: {
-    id: 'ct3_delivery_mode',
-    prompt: 'Какой вариант доставки нужен?',
-    type: 'choice',
-    options: DELIVERY_MODE_OPTIONS_CT3,
-    applyAnswer: (_shipment, raw) => (raw === 'unknown' ? {} : { delivery_mode: raw as DeliveryMode }),
-    next: (_shipment, raw) => (raw === 'unknown' ? 'ct3_mode_explainer' : 'ct3_cost'),
-  },
-  ct3_mode_explainer: {
-    id: 'ct3_mode_explainer',
-    prompt: MODE_EXPLAINER_PROMPT,
-    type: 'info',
-    applyAnswer: () => ({}),
-    next: () => 'ct3_delivery_mode_forced',
-  },
-  ct3_delivery_mode_forced: {
-    id: 'ct3_delivery_mode_forced',
-    prompt: 'Какая доставка нужна?',
-    type: 'choice',
-    options: DELIVERY_MODE_FORCED_OPTIONS_CT3,
-    applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
-    next: () => 'ct3_cost',
-  },
-  ct3_cost: {
-    id: 'ct3_cost',
-    prompt: 'Стоимость товара в юанях? Можно пропустить.',
-    type: 'number',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({ product_cost: toNumberOrNull(raw), currency: 'CNY' }),
-    next: () => 'ct3_weight',
-  },
-  ct3_weight: {
-    id: 'ct3_weight',
-    prompt: 'Вес (кг)? Можно пропустить.',
-    type: 'number',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({ weight_kg: toNumberOrNull(raw) }),
-    next: () => 'ct3_volume',
-  },
-  ct3_volume: {
-    id: 'ct3_volume',
-    prompt: 'Объём (м³)? Можно пропустить.',
-    type: 'number',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({ volume_m3: toNumberOrNull(raw) }),
-    next: (shipment) => {
-      const services = shipment.separate_services
-      if (services.includes('export_clearance_cn')) return 'ct3_export_docs'
-      if (services.includes('customs_clearance')) return 'ct3_customs_docs'
-      if (services.includes('certification')) return 'ct3_certification'
-      return 'ct3_logistics_calc'
-    },
-  },
-  ct3_export_docs: {
-    id: 'ct3_export_docs',
-    prompt: 'Какие документы для экспортного оформления у вас уже есть?',
-    type: 'multi-choice',
-    optional: true,
-    options: CT3_EXPORT_DOCS_OPTIONS,
-    applyAnswer: (shipment, raw) => ({ documents: [...shipment.documents, ...parseMultiChoice(raw)] }),
-    next: (shipment) => {
-      if (shipment.separate_services.includes('customs_clearance')) return 'ct3_customs_docs'
-      if (shipment.separate_services.includes('certification')) return 'ct3_certification'
-      return 'ct3_logistics_calc'
-    },
-  },
-  ct3_customs_docs: {
-    id: 'ct3_customs_docs',
-    prompt: 'Какие документы для таможенного оформления у вас уже есть?',
-    type: 'multi-choice',
-    optional: true,
-    options: CT3_CUSTOMS_DOCS_OPTIONS,
-    applyAnswer: (shipment, raw) => ({ documents: [...shipment.documents, ...parseMultiChoice(raw)] }),
-    next: (shipment) => (shipment.separate_services.includes('certification') ? 'ct3_certification' : 'ct3_logistics_calc'),
-  },
-  ct3_certification: {
-    id: 'ct3_certification',
-    prompt: 'Какие дополнительные документы или маркировка могут понадобиться?',
-    type: 'multi-choice',
-    optional: true,
-    options: CT3_CERTIFICATION_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ non_tariff_services: parseMultiChoice(raw) }),
-    next: () => 'ct3_logistics_calc',
-  },
-  ct3_logistics_calc: {
-    id: 'ct3_logistics_calc',
-    prompt: 'Нужен ли расчёт логистики?',
-    type: 'choice',
-    options: [
-      { value: 'yes', label: 'Да' },
-      { value: 'no', label: 'Нет' },
-    ],
-    applyAnswer: (_shipment, raw) => ({ needs_logistics_calc: raw === 'yes' }),
-    next: () => 'ct3_extra_services',
-  },
-  ct3_extra_services: {
-    id: 'ct3_extra_services',
     prompt: 'Нужны дополнительные услуги?',
     type: 'multi-choice',
     optional: true,

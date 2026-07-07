@@ -12,7 +12,7 @@ import type { Shipment } from '@/lib/types/shipment'
 // Единое поле "название или ссылка" во всех ветках (tn.md) — после ответа запускаем AI-анализ
 // товара: категорию для расчёта, код ТН ВЭД и документы/сертификацию теперь определяет AI,
 // а не отдельные вопросы.
-const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product', 'ct3_product'])
+const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product'])
 
 // Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
 // даём функции запас времени сверх обычных секунд на сохранение в Supabase.
