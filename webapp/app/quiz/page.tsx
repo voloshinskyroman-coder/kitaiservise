@@ -15,6 +15,29 @@ function splitOptionLabel(opt: QuestionOption): { main: string; detail: string |
   return { main: match[1], detail: match[2] }
 }
 
+// Фото с телефона обычно 3000-4000px по стороне — для vision-анализа этого не нужно,
+// только раздувает токены и время загрузки. PDF и уже маленькие файлы не трогаем.
+async function compressIfImage(file: File): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/heic' || file.type === 'image/heif') return file
+
+  const bitmap = await createImageBitmap(file)
+  const maxSide = 1600
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height))
+  const width = Math.round(bitmap.width * scale)
+  const height = Math.round(bitmap.height * scale)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return file
+  ctx.drawImage(bitmap, 0, 0, width, height)
+
+  const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8))
+  if (!blob) return file
+  return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' })
+}
+
 export default function QuizPage() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   // Первый вопрос известен заранее и не зависит от сервера — рисуем его сразу,
@@ -25,6 +48,9 @@ export default function QuizPage() {
   const [inputValue, setInputValue] = useState('')
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [selectedValues, setSelectedValues] = useState<string[]>([])
+  const [attachment, setAttachment] = useState<{ path: string; mimeType: string; name: string } | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
@@ -67,6 +93,8 @@ export default function QuizPage() {
     setSelectedValues(data.question?.preselected ?? [])
     setStep(data.step ?? 0)
     setHistory(data.history ?? [])
+    setAttachment(null)
+    setUploadError(null)
   }
 
   useEffect(() => {
@@ -77,6 +105,30 @@ export default function QuizPage() {
   // Пока sessionId ещё не пришёл, оптимистично показанный вопрос уже на экране,
   // но отвечать на него ещё нельзя — блокируем взаимодействие вместо тихого no-op.
   const interactionDisabled = submitting || !sessionId
+
+  async function handleFileSelect(file: File) {
+    if (!sessionId) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const compressed = await compressIfImage(file)
+      const formData = new FormData()
+      formData.append('sessionId', sessionId)
+      formData.append('file', compressed)
+      const res = await fetch('/api/shipment/upload', { method: 'POST', body: formData })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        setUploadError(body?.error ?? 'Не удалось загрузить файл')
+        return
+      }
+      const data = await res.json()
+      setAttachment({ path: data.path, mimeType: data.mimeType, name: file.name })
+    } catch {
+      setUploadError('Не удалось загрузить файл')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   // Подсказки по мере ввода (Google Product Taxonomy, см. /api/product-suggest) — только для
   // вопросов с autocomplete: true, с debounce, чтобы не долбить API на каждый символ.
@@ -117,6 +169,8 @@ export default function QuizPage() {
     setQuestion(data.nextQuestion)
     setInputValue('')
     setSelectedValues(data.nextQuestion?.preselected ?? [])
+    setAttachment(null)
+    setUploadError(null)
     setStep((s) => s + 1)
     setSubmitting(false)
     if (!data.nextQuestion) setResult(data.shipment)
@@ -130,6 +184,8 @@ export default function QuizPage() {
     setStep(prev.step)
     setInputValue('')
     setSelectedValues(prev.question.preselected ?? [])
+    setAttachment(null)
+    setUploadError(null)
     setError(null)
   }
 
@@ -313,6 +369,68 @@ export default function QuizPage() {
                     type="button"
                     onClick={() => submitAnswer('')}
                     disabled={interactionDisabled}
+                    className="flex min-h-[44px] cursor-pointer items-center justify-center self-center px-4 text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
+                  >
+                    Пропустить
+                  </button>
+                )}
+              </div>
+            )}
+
+            {question.type === 'file' && (
+              <div className="flex flex-col gap-3">
+                {!attachment ? (
+                  <label
+                    className={`flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border px-5 text-center transition-colors duration-200 hover:border-primary hover:bg-surface ${
+                      interactionDisabled || uploading ? 'pointer-events-none opacity-60' : ''
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-7 w-7 text-muted" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+                    </svg>
+                    <span className="text-sm font-medium text-muted">{uploading ? 'Загружаем...' : 'Выбрать файл или фото'}</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      disabled={interactionDisabled || uploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) void handleFileSelect(file)
+                        e.target.value = ''
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <div className="flex items-center gap-3 rounded-2xl border border-primary bg-surface px-5 py-4">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} className="h-6 w-6 shrink-0 text-primary" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                    <span className="flex-1 truncate text-sm font-medium">{attachment.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachment(null)}
+                      disabled={interactionDisabled}
+                      className="shrink-0 cursor-pointer text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
+                    >
+                      Убрать
+                    </button>
+                  </div>
+                )}
+                {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+                <button
+                  type="button"
+                  onClick={() => attachment && submitAnswer(JSON.stringify({ path: attachment.path, mimeType: attachment.mimeType }))}
+                  disabled={interactionDisabled || uploading || !attachment}
+                  className="min-h-[56px] w-full cursor-pointer rounded-2xl bg-cta px-5 font-semibold text-white transition-colors duration-200 hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Далее
+                </button>
+                {question.optional && (
+                  <button
+                    type="button"
+                    onClick={() => submitAnswer('')}
+                    disabled={interactionDisabled || uploading}
                     className="flex min-h-[44px] cursor-pointer items-center justify-center self-center px-4 text-sm text-muted underline-offset-2 hover:underline disabled:cursor-not-allowed"
                   >
                     Пропустить

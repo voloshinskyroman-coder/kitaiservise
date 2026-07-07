@@ -6,6 +6,8 @@ import { getQuestionNode, getNextQuestion } from '@/lib/engines/decisionEngine'
 import { getAccuracyHint } from '@/lib/engines/recommendationEngine'
 import { notifyLogist } from '@/lib/engines/logisticEngine'
 import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
+import { analyzeDocumentImage } from '@/lib/engines/documentAnalysis'
+import { getSignedAttachmentUrl } from '@/lib/engines/attachmentStorage'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
 
@@ -13,6 +15,7 @@ import type { Shipment } from '@/lib/types/shipment'
 // товара: категорию для расчёта, код ТН ВЭД и документы/сертификацию теперь определяет AI,
 // а не отдельные вопросы.
 const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product'])
+const ATTACHMENT_QUESTION_IDS = new Set(['ct0_attachment', 'ct1_attachment', 'ct2_attachment'])
 
 // Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
 // даём функции запас времени сверх обычных секунд на сохранение в Supabase.
@@ -93,6 +96,24 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         console.error('[shipment/answer] analyzeProduct background failed', err)
+      }
+    })
+  }
+
+  // AI-пересказ вложения (инвойс/упаковочный лист) — только для изображений, PDF пока не
+  // конвертируем для vision-модели. Файл в бот логисту уходит позже, при notifyLogist.
+  if (ATTACHMENT_QUESTION_IDS.has(questionId) && recalculated.attachment_path && recalculated.attachment_mime_type?.startsWith('image/')) {
+    const attachmentPath = recalculated.attachment_path
+    after(async () => {
+      try {
+        const signedUrl = await getSignedAttachmentUrl(attachmentPath)
+        if (!signedUrl) return
+        const summary = await analyzeDocumentImage(signedUrl)
+        if (summary) {
+          await supabase.from('shipments').update({ attachment_ai_summary: summary }).eq('id', sessionId)
+        }
+      } catch (err) {
+        console.error('[shipment/answer] analyzeDocumentImage background failed', err)
       }
     })
   }

@@ -57,6 +57,11 @@ export interface Shipment {
   ai_confidence: number | null
   ai_suggested_documents: string[]
   ai_suggested_non_tariff: string[]
+  // Вложение (инвойс/упаковочный лист) — путь в приватном Storage-бакете shipment-documents,
+  // не публичный URL. attachment_ai_summary заполняется AI-анализом фото в фоне.
+  attachment_path: string | null
+  attachment_mime_type: string | null
+  attachment_ai_summary: string | null
   origin_city: string | null
   destination_city: string | null
   destination_type: DestinationType | null

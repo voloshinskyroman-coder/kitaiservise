@@ -154,6 +154,16 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         </form>
       </div>
 
+      {lead.attachment_path && (
+        <div className="mt-4 rounded-xl border border-neutral-800 p-4">
+          <p className="text-sm text-neutral-500">📎 Вложение</p>
+          <p className="mt-1 text-sm text-neutral-100">Инвойс/упаковочный лист прикреплён (файл отправлен вместе с заявкой в Telegram)</p>
+          {lead.attachment_ai_summary && (
+            <p className="mt-2 text-sm text-neutral-300">🤖 {lead.attachment_ai_summary}</p>
+          )}
+        </div>
+      )}
+
       {lead.client_comment && (
         <p className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-200">
           📝 {lead.client_comment}

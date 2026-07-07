@@ -8,7 +8,8 @@ import {
   LOGISTICS_METHOD_OPTIONS,
 } from '@/lib/config/decisionTree'
 import { ACCURACY_LABEL } from './recommendationEngine'
-import { sendTelegramMessage } from '@/lib/telegram/sendMessage'
+import { sendTelegramMessage, sendTelegramDocument } from '@/lib/telegram/sendMessage'
+import { getSignedAttachmentUrl } from './attachmentStorage'
 import {
   DELIVERY_MODE_LABEL,
   TEMPERATURE_EMOJI,
@@ -98,6 +99,12 @@ export function buildLogistCardText(shipment: Shipment): string {
   const days = formatDays(shipment)
   if (days) lines.push(`Срок: ${days}`)
 
+  if (shipment.attachment_path) {
+    lines.push('')
+    lines.push('📎 Вложение: инвойс/упаковочный лист (файлом ниже)')
+    if (shipment.attachment_ai_summary) lines.push(`🤖 AI по вложению: ${escapeHtml(shipment.attachment_ai_summary)}`)
+  }
+
   if (shipment.client_comment) {
     lines.push('')
     lines.push(`📝 Комментарий клиента: ${escapeHtml(shipment.client_comment)}`)
@@ -129,4 +136,13 @@ export async function notifyLogist(shipment: Shipment): Promise<void> {
   }
 
   await sendTelegramMessage(chatId, text)
+
+  if (shipment.attachment_path) {
+    const signedUrl = await getSignedAttachmentUrl(shipment.attachment_path)
+    if (signedUrl) {
+      await sendTelegramDocument(chatId, signedUrl, 'Инвойс/упаковочный лист к заявке выше')
+    } else {
+      console.error('[logisticEngine] не удалось получить подписанную ссылку на вложение', shipment.attachment_path)
+    }
+  }
 }
