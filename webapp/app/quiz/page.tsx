@@ -324,17 +324,19 @@ export default function QuizPage() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    if (!inputValue.trim()) return
                     if (question.withAttachment) {
+                      // Инвойс — альтернатива ручному вводу: достаточно либо текста/ссылки, либо файла.
+                      if (!inputValue.trim() && !attachment) return
                       submitAnswer(
                         JSON.stringify({
                           product: inputValue.trim(),
                           attachment: attachment ? { path: attachment.path, mimeType: attachment.mimeType } : null,
                         }),
                       )
-                    } else {
-                      submitAnswer(inputValue.trim())
+                      return
                     }
+                    if (!inputValue.trim()) return
+                    submitAnswer(inputValue.trim())
                   }}
                   className="flex gap-2"
                 >
@@ -368,7 +370,11 @@ export default function QuizPage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={interactionDisabled || !inputValue.trim() || uploading}
+                    disabled={
+                      interactionDisabled ||
+                      uploading ||
+                      (question.withAttachment ? !inputValue.trim() && !attachment : !inputValue.trim())
+                    }
                     className="min-h-[56px] min-w-[56px] cursor-pointer rounded-2xl bg-cta px-5 font-semibold text-white transition-colors duration-200 hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {submitting ? '...' : 'Далее'}
