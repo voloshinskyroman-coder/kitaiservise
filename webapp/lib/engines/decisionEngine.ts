@@ -7,6 +7,7 @@ export interface SerializedQuestion {
   type: QuestionNode['type']
   options?: QuestionNode['options']
   optional?: boolean
+  autocomplete?: boolean
   preselected?: string[]
 }
 
@@ -66,6 +67,7 @@ export function serializeQuestion(node: QuestionNode, shipment?: Shipment): Seri
     type: node.type,
     options: node.options,
     optional: node.optional,
+    autocomplete: node.autocomplete,
     preselected: shipment && node.preselect ? node.preselect(shipment) : undefined,
   }
 }

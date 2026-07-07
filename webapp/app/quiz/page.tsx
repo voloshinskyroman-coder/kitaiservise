@@ -23,6 +23,7 @@ export default function QuizPage() {
   const [question, setQuestion] = useState<SerializedQuestion | null>(() => getStartQuestion())
   const [history, setHistory] = useState<Array<{ question: SerializedQuestion; step: number }>>([])
   const [inputValue, setInputValue] = useState('')
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const [selectedValues, setSelectedValues] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [step, setStep] = useState(0)
@@ -76,6 +77,24 @@ export default function QuizPage() {
   // Пока sessionId ещё не пришёл, оптимистично показанный вопрос уже на экране,
   // но отвечать на него ещё нельзя — блокируем взаимодействие вместо тихого no-op.
   const interactionDisabled = submitting || !sessionId
+
+  // Подсказки по мере ввода (Google Product Taxonomy, см. /api/product-suggest) — только для
+  // вопросов с autocomplete: true, с debounce, чтобы не долбить API на каждый символ.
+  useEffect(() => {
+    const autocomplete = question?.autocomplete
+    const query = inputValue.trim()
+    const id = setTimeout(() => {
+      if (!autocomplete || query.length < 2) {
+        setSuggestions([])
+        return
+      }
+      fetch(`/api/product-suggest?q=${encodeURIComponent(query)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => setSuggestions(data?.suggestions?.map((s: { leaf_name: string }) => s.leaf_name) ?? []))
+        .catch(() => setSuggestions([]))
+    }, 250)
+    return () => clearTimeout(id)
+  }, [inputValue, question?.autocomplete])
 
   async function submitAnswer(answer: string) {
     if (!sessionId || !question || submitting) return
@@ -253,14 +272,34 @@ export default function QuizPage() {
                   }}
                   className="flex gap-2"
                 >
-                  <input
-                    type={question.type === 'number' ? 'number' : 'text'}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    autoFocus
-                    disabled={interactionDisabled}
-                    className="min-h-[56px] flex-1 rounded-2xl border border-border px-5 text-base outline-none transition-colors duration-200 focus:border-primary disabled:opacity-60"
-                  />
+                  <div className="relative flex-1">
+                    <input
+                      type={question.type === 'number' ? 'number' : 'text'}
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      autoFocus
+                      disabled={interactionDisabled}
+                      autoComplete="off"
+                      className="min-h-[56px] w-full rounded-2xl border border-border px-5 text-base outline-none transition-colors duration-200 focus:border-primary disabled:opacity-60"
+                    />
+                    {suggestions.length > 0 && (
+                      <div className="absolute inset-x-0 top-[calc(100%+0.5rem)] z-10 flex flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-lg">
+                        {suggestions.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => {
+                              setInputValue(s)
+                              setSuggestions([])
+                            }}
+                            className="cursor-pointer px-5 py-3 text-left text-base transition-colors duration-200 hover:bg-surface"
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="submit"
                     disabled={interactionDisabled || !inputValue.trim()}

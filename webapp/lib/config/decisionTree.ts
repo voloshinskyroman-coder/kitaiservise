@@ -16,6 +16,8 @@ export interface QuestionNode {
   options?: QuestionOption[]
   /** Необязательный вопрос — клиент показывает кнопку "Пропустить". */
   optional?: boolean
+  /** Для text — показывать подсказки по мере ввода (см. /api/product-suggest, Google Product Taxonomy). */
+  autocomplete?: boolean
   /** Для multi-choice — какие значения предзаполнить галочками (например, по результату AI-анализа товара). */
   preselect?: (shipment: Shipment) => string[]
   /** Патч в Shipment на основе сырого ответа пользователя (multi-choice приходит как JSON.stringify(string[])). */
@@ -357,6 +359,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     id: 'ct0_product',
     prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
+    autocomplete: true,
     applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct0_budget',
   },
@@ -424,6 +427,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     id: 'ct1_product',
     prompt: 'Что хотите привезти? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
+    autocomplete: true,
     applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct1_payment_method',
   },
@@ -572,6 +576,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     id: 'ct2_product',
     prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
+    autocomplete: true,
     applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct2_origin',
   },
@@ -730,6 +735,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Что перевозим? Название товара или ссылка (Alibaba, 1688, Taobao, Made-in-China).',
     type: 'text',
     optional: true,
+    autocomplete: true,
     applyAnswer: (_shipment, raw) => applyProductInput(raw),
     next: () => 'ct3_location',
   },
