@@ -9,16 +9,24 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = createServerSupabaseClient()
-  const { data, error } = await supabase
-    .from('product_categories')
-    .select('id, path, leaf_name')
-    .ilike('leaf_name', `%${q}%`)
-    .order('leaf_name', { ascending: true })
-    .limit(8)
+  // Берём с запасом (алфавитный ORDER BY в самом запросе не важен — сортируем ниже по релевантности),
+  // иначе при >8 совпадениях на один запрос нужные варианты (например "Электромассажёры" на "Э")
+  // могли обрезаться просто потому, что алфавитно оказывались в конце.
+  const { data, error } = await supabase.from('product_categories').select('id, path, leaf_name').ilike('leaf_name', `%${q}%`).limit(60)
 
-  if (error) {
+  if (error || !data) {
     return NextResponse.json({ suggestions: [] })
   }
 
-  return NextResponse.json({ suggestions: data ?? [] })
+  const queryLower = q.toLowerCase()
+  const ranked = data
+    .sort((a, b) => {
+      const aPrefix = a.leaf_name.toLowerCase().startsWith(queryLower) ? 0 : 1
+      const bPrefix = b.leaf_name.toLowerCase().startsWith(queryLower) ? 0 : 1
+      if (aPrefix !== bPrefix) return aPrefix - bPrefix
+      return a.leaf_name.length - b.leaf_name.length
+    })
+    .slice(0, 15)
+
+  return NextResponse.json({ suggestions: ranked })
 }
