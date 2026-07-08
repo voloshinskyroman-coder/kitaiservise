@@ -5,11 +5,7 @@ import { recalculateShipment } from '@/lib/engines/recalculate'
 import { getQuestionNode, getNextQuestion } from '@/lib/engines/decisionEngine'
 import { getAccuracyHint } from '@/lib/engines/recommendationEngine'
 import { notifyLogist } from '@/lib/engines/logisticEngine'
-import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
-import { analyzeDocumentImage, analyzeDocumentText } from '@/lib/engines/documentAnalysis'
-import { getSignedAttachmentUrl } from '@/lib/engines/attachmentStorage'
-import { extractAttachmentText, TEXT_EXTRACTABLE_MIME_TYPES } from '@/lib/engines/attachmentText'
-import { extractPdfText } from '@/lib/engines/pdfText'
+import { runProductAndAttachmentAnalysis } from '@/lib/engines/productAiPipeline'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
 
@@ -19,9 +15,9 @@ import type { Shipment } from '@/lib/types/shipment'
 // экрана (withAttachment), поэтому оба фоновых анализа триггерятся одним и тем же questionId.
 const PRODUCT_QUESTION_IDS = new Set(['ct0_product', 'ct1_product', 'ct2_product'])
 
-// Фоновый вызов AI (after()) продолжает работать после отправки ответа клиенту —
-// даём функции запас времени сверх обычных секунд на сохранение в Supabase.
-export const maxDuration = 30
+// Классификация товара может делать повторный запрос (если код ТН ВЭД не нашёлся в справочнике)
+// плюс параллельно разбирает вложение — с запасом даём до 60с, чтобы не резать фон раньше времени.
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   const { sessionId, questionId, answer } = (await req.json()) as {
@@ -64,79 +60,45 @@ export async function POST(req: NextRequest) {
   }
 
   if (!nextQuestion) {
-    // Уведомление логиста не должно ломать ответ пользователю, если Telegram недоступен.
-    try {
-      await notifyLogist(recalculated)
-    } catch (err) {
-      console.error('[shipment/answer] notifyLogist failed', err)
-    }
-  }
-
-  // AI-анализ товара (tn.md) — не блокирует ответ клиенту (сам запрос к LLM занимает секунды),
-  // дозаполняется в фоне после отправки ответа: до вопросов про категорию/сертификацию ещё есть время.
-  // Вложение (инвойс/упаковочный лист) — тот же фон: xlsx/csv/txt/PDF с текстовым слоем разбираются
-  // в текст и идут и в классификацию товара, и в отдельный пересказ для логиста; фото — через vision.
-  // Сканы/фото-PDF без текстового слоя и legacy .xls пока не разбираются AI (остаются только файлом).
-  if (PRODUCT_QUESTION_IDS.has(questionId)) {
-    const attachmentPath = recalculated.attachment_path
-    const attachmentMimeType = recalculated.attachment_mime_type
+    // Клиент видит "Заявка принята" сразу — но логиста уведомляем только после того, как AI
+    // закончит (успешно или нет) разбор товара/вложения, чтобы карточка в Telegram приходила
+    // с готовым кодом ТН ВЭД/документами, а не раньше времени. Если AI так и не ответит —
+    // страховка: всё равно уведомляем логиста через runProductAndAttachmentAnalysis, просто
+    // без AI-полей, чтобы лид не потерялся.
     after(async () => {
-      let attachmentText: string | null = null
-      if (attachmentPath && attachmentMimeType) {
-        try {
-          if (TEXT_EXTRACTABLE_MIME_TYPES.has(attachmentMimeType)) {
-            attachmentText = await extractAttachmentText(attachmentPath, attachmentMimeType)
-          } else if (attachmentMimeType === 'application/pdf') {
-            attachmentText = await extractPdfText(attachmentPath)
+      try {
+        let finalShipment = recalculated
+        const needsAnalysis =
+          finalShipment.ai_confidence == null &&
+          Boolean(finalShipment.product_description || finalShipment.product_reference_value || finalShipment.attachment_path)
+
+        if (needsAnalysis) {
+          // Фоновый разбор мог уже завершиться на предыдущих шагах — проверяем актуальное состояние,
+          // прежде чем запускать AI ещё раз.
+          const { data: latest } = await supabase.from('shipments').select('*').eq('id', sessionId).single<Shipment>()
+          if (latest) finalShipment = latest
+
+          if (finalShipment.ai_confidence == null) {
+            const patch = await runProductAndAttachmentAnalysis(sessionId, finalShipment)
+            finalShipment = { ...finalShipment, ...patch } as Shipment
           }
-        } catch (err) {
-          console.error('[shipment/answer] extract attachment text failed', err)
         }
-      }
 
-      const [analysis, attachmentSummary] = await Promise.all([
-        analyzeAndVerifyProduct({
-          category: recalculated.category,
-          description: recalculated.product_description,
-          referenceValue: recalculated.product_reference_value,
-          attachmentText,
-        }).catch((err) => {
-          console.error('[shipment/answer] analyzeProduct background failed', err)
-          return null
-        }),
-        (async () => {
-          if (!attachmentPath || !attachmentMimeType) return null
-          try {
-            if (attachmentMimeType.startsWith('image/')) {
-              const signedUrl = await getSignedAttachmentUrl(attachmentPath)
-              return signedUrl ? await analyzeDocumentImage(signedUrl) : null
-            }
-            return attachmentText ? await analyzeDocumentText(attachmentText) : null
-          } catch (err) {
-            console.error('[shipment/answer] attachment summary background failed', err)
-            return null
-          }
-        })(),
-      ])
-
-      const patch: Record<string, unknown> = {}
-      if (analysis) {
-        Object.assign(patch, {
-          // category клиент больше не выбирает сам — если AI его не определил, не затираем null.
-          ...(analysis.category ? { category: analysis.category } : {}),
-          hs_code_suggested: analysis.hsCodeEntry ? analysis.hsCodeEntry.code : analysis.hsCode,
-          hs_code_suggested_description: analysis.hsCodeEntry?.description ?? null,
-          ai_confidence: analysis.confidence,
-          ai_suggested_documents: analysis.documents,
-          ai_suggested_non_tariff: analysis.nonTariffServices,
-        })
-      }
-      if (attachmentSummary) patch.attachment_ai_summary = attachmentSummary
-
-      if (Object.keys(patch).length > 0) {
-        await supabase.from('shipments').update(patch).eq('id', sessionId)
+        await notifyLogist(finalShipment)
+      } catch (err) {
+        console.error('[shipment/answer] notifyLogist (post-AI) failed', err)
       }
     })
+  }
+
+  // AI-анализ товара (tn.md) — не блокирует ответ клиенту, дозаполняется в фоне сразу после вопроса
+  // о товаре: даёт AI время, пока клиент отвечает на остальные вопросы (до уведомления логиста выше).
+  if (PRODUCT_QUESTION_IDS.has(questionId)) {
+    after(() =>
+      runProductAndAttachmentAnalysis(sessionId, recalculated).catch((err) => {
+        console.error('[shipment/answer] analyzeProduct background failed', err)
+      }),
+    )
   }
 
   const hint = getAccuracyHint(recalculated.calculation_accuracy ?? 'low', missingFieldLabels)

@@ -253,22 +253,22 @@ export default function QuizPage() {
           </div>
         )}
 
-        {question && question.type !== 'info' && (
+        {question && question.type !== 'info' && (() => {
+          const { heading, detail } = splitPrompt(question.prompt)
+          // Для choice — пояснение это скорее сноска (например «доставка по России отдельно»),
+          // варианты ответа сами по себе самообъясняющие, поэтому текст переносим под кнопки.
+          const isChoice = question.type === 'choice'
+          return (
           <div className="flex flex-col gap-6">
-            {(() => {
-              const { heading, detail } = splitPrompt(question.prompt)
-              return (
-                <div className="flex flex-col gap-2">
-                  <h1 className="text-xl font-semibold leading-snug tracking-tight">{heading}</h1>
-                  {detail && <p className="text-sm leading-relaxed text-muted">{detail}</p>}
-                </div>
-              )
-            })()}
+            <div className="flex flex-col gap-2">
+              <h1 className="text-xl font-semibold leading-snug tracking-tight">{heading}</h1>
+              {detail && !isChoice && <p className="text-sm leading-relaxed text-muted">{detail}</p>}
+            </div>
 
             {question.type === 'choice' && (
               <div className="flex flex-col gap-3">
                 {question.options?.map((opt) => {
-                  const { main, detail } = splitOptionLabel(opt)
+                  const { main, detail: optionDetail } = splitOptionLabel(opt)
                   return (
                     <button
                       key={opt.value}
@@ -277,10 +277,11 @@ export default function QuizPage() {
                       className="min-h-[56px] cursor-pointer rounded-2xl border border-border px-5 py-3.5 text-left transition-colors duration-200 hover:border-primary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <span className="block text-base font-medium leading-snug">{main}</span>
-                      {detail && <span className="mt-0.5 block text-sm leading-snug text-muted">{detail}</span>}
+                      {optionDetail && <span className="mt-0.5 block text-sm leading-snug text-muted">{optionDetail}</span>}
                     </button>
                   )
                 })}
+                {detail && <p className="text-xs text-muted/70">{detail}</p>}
               </div>
             )}
 
@@ -456,7 +457,8 @@ export default function QuizPage() {
               </div>
             )}
           </div>
-        )}
+          )
+        })()}
 
         {isFinished && !confirmed && (
           <div>

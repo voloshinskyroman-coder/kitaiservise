@@ -83,7 +83,9 @@ export async function analyzeProduct(input: {
   if (parts.length === 0) return null
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
+  // GPT-5 в среднем отвечает за 16-20с даже при low reasoning effort (замеряно вживую) —
+  // 15с обрывал запросы раньше, чем модель успевала ответить (см. реальный случай "Футболка").
+  const timeout = setTimeout(() => controller.abort(), 25_000)
 
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
