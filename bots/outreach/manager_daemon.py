@@ -191,7 +191,7 @@ edit_waiting: dict[int, dict] = {}   # conv_id → {"msg_id": int, "at": isoform
 
 def _db_get_contact_by_tg_id(tg_id: str) -> dict | None:
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.row_factory = sqlite3.Row
         row = c.execute("SELECT * FROM contacts WHERE tg_id=?", (tg_id,)).fetchone()
         c.close()
@@ -202,7 +202,7 @@ def _db_get_contact_by_tg_id(tg_id: str) -> dict | None:
 
 def _db_get_conversation(conv_id: int) -> dict | None:
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.row_factory = sqlite3.Row
         row = c.execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone()
         c.close()
@@ -213,7 +213,7 @@ def _db_get_conversation(conv_id: int) -> dict | None:
 
 def _db_get_contact(contact_id: int) -> dict | None:
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.row_factory = sqlite3.Row
         row = c.execute("SELECT * FROM contacts WHERE id=?", (contact_id,)).fetchone()
         c.close()
@@ -224,7 +224,7 @@ def _db_get_contact(contact_id: int) -> dict | None:
 
 def _db_get_our_message(contact_id: int) -> str:
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.row_factory = sqlite3.Row
         row = c.execute(
             "SELECT text FROM messages WHERE contact_id=? AND direction='out' ORDER BY id DESC LIMIT 1",
@@ -239,7 +239,7 @@ def _db_get_our_message(contact_id: int) -> str:
 def _db_get_history(contact_id: int) -> list[dict]:
     """Вся переписка с контактом в хронологическом порядке (для AI-контекста)."""
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.row_factory = sqlite3.Row
         rows = c.execute(
             "SELECT direction, text, sent_at FROM messages WHERE contact_id=? ORDER BY id ASC",
@@ -254,7 +254,7 @@ def _db_get_history(contact_id: int) -> list[dict]:
 
 def _db_close_conversation(conv_id: int):
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.execute("UPDATE conversations SET status='closed', updated_at=datetime('now') WHERE id=?", (conv_id,))
         c.commit()
         c.close()
@@ -264,7 +264,7 @@ def _db_close_conversation(conv_id: int):
 
 def _db_upsert_conversation(contact_id: int, account_id: int, ai_draft: str = "") -> int:
     try:
-        c = sqlite3.connect(DB_PATH, timeout=15)
+        c = sqlite3.connect(DB_PATH, timeout=25)
         c.row_factory = sqlite3.Row
         row = c.execute("SELECT id FROM conversations WHERE contact_id=?", (contact_id,)).fetchone()
         if row:
@@ -316,7 +316,7 @@ async def handle_incoming(client: TelegramClient, account_id: int, me, event):
         # Сохраняем сообщение
         for _ in range(5):
             try:
-                c = sqlite3.connect(DB_PATH, timeout=15)
+                c = sqlite3.connect(DB_PATH, timeout=25)
                 c.execute(
                     "INSERT INTO messages (contact_id, account_id, direction, text, tg_msg_id) VALUES (?,?,?,?,?)",
                     (contact["id"], account_id, "in", text, event.message.id)
@@ -328,7 +328,7 @@ async def handle_incoming(client: TelegramClient, account_id: int, me, event):
                 await asyncio.sleep(0.3)
         # Статус контакта → replied
         try:
-            c = sqlite3.connect(DB_PATH, timeout=15)
+            c = sqlite3.connect(DB_PATH, timeout=25)
             c.execute(
                 "UPDATE contacts SET status='replied', replied_at=? WHERE id=?",
                 (datetime.now(timezone.utc).isoformat(), contact["id"])
@@ -398,7 +398,7 @@ async def poll_operator():
                             del edit_waiting[conv_id]
                             continue
                         try:
-                            c = sqlite3.connect(DB_PATH, timeout=10)
+                            c = sqlite3.connect(DB_PATH, timeout=20)
                             c.execute("UPDATE conversations SET ai_draft=?, updated_at=datetime('now') WHERE id=?",
                                       (text, conv_id))
                             c.commit()
@@ -435,7 +435,7 @@ async def poll_operator():
                     if not acc_cl:
                         # Аккаунт в другой группе — ставим в очередь
                         try:
-                            _qc = sqlite3.connect(DB_PATH, timeout=10)
+                            _qc = sqlite3.connect(DB_PATH, timeout=20)
                             _qc.execute(
                                 "INSERT INTO pending_operator_sends (conv_id) VALUES (?)",
                                 (conv_id,)
@@ -451,7 +451,7 @@ async def poll_operator():
                         sent_msg = await acc_cl.send_message(target, draft)
                         for _ in range(5):
                             try:
-                                c = sqlite3.connect(DB_PATH, timeout=15)
+                                c = sqlite3.connect(DB_PATH, timeout=25)
                                 c.execute(
                                     "INSERT INTO messages (contact_id, account_id, direction, text, tg_msg_id) VALUES (?,?,?,?,?)",
                                     (conv["contact_id"], conv["account_id"], "out", draft, sent_msg.id)
@@ -475,7 +475,7 @@ async def poll_operator():
                     conv    = _db_get_conversation(conv_id)
                     if conv:
                         try:
-                            c = sqlite3.connect(DB_PATH, timeout=10)
+                            c = sqlite3.connect(DB_PATH, timeout=20)
                             c.execute("UPDATE contacts SET status='skipped' WHERE id=?", (conv["contact_id"],))
                             c.commit()
                             c.close()
@@ -503,7 +503,7 @@ async def poll_pending_sends():
     from operator_bot import notify_sent
     while running:
         try:
-            c = sqlite3.connect(DB_PATH, timeout=10)
+            c = sqlite3.connect(DB_PATH, timeout=20)
             c.row_factory = sqlite3.Row
             rows = c.execute(
                 "SELECT * FROM pending_operator_sends WHERE status='pending' ORDER BY id"
@@ -524,7 +524,7 @@ async def poll_pending_sends():
                 target  = f"@{contact['username']}" if contact and contact.get("username") else int(contact["tg_id"])
                 try:
                     sent_msg = await acc_cl.send_message(target, draft)
-                    _c2 = sqlite3.connect(DB_PATH, timeout=15)
+                    _c2 = sqlite3.connect(DB_PATH, timeout=25)
                     _c2.execute(
                         "INSERT INTO messages (contact_id, account_id, direction, text, tg_msg_id) VALUES (?,?,?,?,?)",
                         (conv["contact_id"], conv["account_id"], "out", draft, sent_msg.id)
@@ -546,7 +546,7 @@ async def poll_pending_sends():
 
 def _db_mark_pending_send(pend_id: int, status: str):
     try:
-        c = sqlite3.connect(DB_PATH, timeout=10)
+        c = sqlite3.connect(DB_PATH, timeout=20)
         c.execute("UPDATE pending_operator_sends SET status=? WHERE id=?", (status, pend_id))
         c.commit()
         c.close()
@@ -558,7 +558,7 @@ def _db_mark_pending_send(pend_id: int, status: str):
 def db_log(session: str, type_: str, detail: str = ""):
     for _ in range(10):
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=15)
+            conn = sqlite3.connect(DB_PATH, timeout=25)
             conn.execute("INSERT INTO activity_log (session,type,detail) VALUES (?,?,?)",
                          (session, type_, detail))
             conn.commit()
@@ -568,7 +568,7 @@ def db_log(session: str, type_: str, detail: str = ""):
             import time; time.sleep(0.3)
 
 def done_today(session: str, type_: str, detail: str = "") -> bool:
-    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn = sqlite3.connect(DB_PATH, timeout=25)
     r = conn.execute(
         "SELECT COUNT(*) FROM activity_log WHERE session=? AND type=? AND detail=? AND date(done_at)=date('now')",
         (session, type_, detail)).fetchone()[0]
@@ -579,7 +579,7 @@ def done_today(session: str, type_: str, detail: str = "") -> bool:
 def reactions_today_count(session: str) -> int:
     """Сколько реакций аккаунт уже поставил сегодня."""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn = sqlite3.connect(DB_PATH, timeout=20)
         count = conn.execute(
             "SELECT COUNT(*) FROM activity_log WHERE session=? AND type='reaction' AND date(done_at)=date('now')",
             (session,)
@@ -625,7 +625,7 @@ def personal_handles_for(session: str, all_handles: list, n: int) -> list:
     return chosen[:min(count, len(chosen))]
 
 def sent_today(account_id: int) -> int:
-    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn = sqlite3.connect(DB_PATH, timeout=25)
     r = conn.execute(
         "SELECT COUNT(*) FROM messages WHERE account_id=? AND direction='out' AND date(sent_at)=date('now')",
         (account_id,)).fetchone()[0]
@@ -633,7 +633,7 @@ def sent_today(account_id: int) -> int:
     return r
 
 def sent_this_hour(account_id: int) -> int:
-    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn = sqlite3.connect(DB_PATH, timeout=25)
     r = conn.execute(
         "SELECT COUNT(*) FROM messages WHERE account_id=? AND direction='out' AND sent_at >= datetime('now','-1 hour')",
         (account_id,)).fetchone()[0]
@@ -787,7 +787,7 @@ def compute_daily_limit(session: str, tier: str) -> int:
 def get_account_tier(session: str) -> str:
     """black=dead, red=paused+active, yellow=paused<24h ago, blue=new<7d, green=ok"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn = sqlite3.connect(DB_PATH, timeout=20)
         row = conn.execute(
             "SELECT status, paused_until, created_at FROM accounts WHERE session=?",
             (session,)).fetchone()
@@ -844,8 +844,10 @@ async def task_upgrade_accounts():
         if acc.get("daily_limit", 0) != 0:
             continue
         session = acc["session"]
+        if _GROUP is not None and _stable_group(session) != _GROUP:
+            continue  # чужой аккаунт — апгрейдит его тот процесс, которому он принадлежит
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn = sqlite3.connect(DB_PATH, timeout=20)
             row = conn.execute(
                 "SELECT status, created_at FROM accounts WHERE session=?", (session,)
             ).fetchone()
@@ -882,7 +884,7 @@ async def task_upgrade_accounts():
 def _get_account_age(session: str) -> int:
     """Возраст аккаунта в днях (1 = первый день)."""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn = sqlite3.connect(DB_PATH, timeout=20)
         row = conn.execute("SELECT created_at FROM accounts WHERE session=?", (session,)).fetchone()
         conn.close()
         if row and row[0]:
@@ -1057,7 +1059,7 @@ async def _task_inter_chat_inner():
 
         # Выбираем скрипт, opener которого s1 ещё не использовал сегодня
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn = sqlite3.connect(DB_PATH, timeout=20)
             used = {r[0] for r in conn.execute(
                 "SELECT detail FROM activity_log WHERE session=? AND type='inter_opener' AND date(done_at)=date('now')",
                 (s1,)).fetchall()}
@@ -1254,7 +1256,7 @@ async def _task_sender_inner():
         contacts = get_pending_contacts(account_id, limit=200)
         # Reply rate аналитика
         try:
-            _rr_conn = sqlite3.connect(DB_PATH, timeout=5)
+            _rr_conn = sqlite3.connect(DB_PATH, timeout=20)
             _rr = _rr_conn.execute(
                 "SELECT COUNT(*) FROM messages WHERE account_id=? AND direction=?",
                 (account_id, "in")
@@ -1269,7 +1271,7 @@ async def _task_sender_inner():
         except Exception:
             log.info(f"[{me.first_name}] контактов: {len(contacts)}, отправлено: {sent_today(account_id)}/{acc_daily}")
 
-        conn_check = sqlite3.connect(DB_PATH, timeout=15)
+        conn_check = sqlite3.connect(DB_PATH, timeout=25)
         for contact in contacts:
             if not (SEND_HOUR_START <= now_msk().hour < SEND_HOUR_END):
                 break
@@ -1314,7 +1316,7 @@ async def _task_sender_inner():
 
                 # A: есть живые диалоги — заходим в один (проверяем ответы)
                 try:
-                    _db_pre = sqlite3.connect(DB_PATH, timeout=5)
+                    _db_pre = sqlite3.connect(DB_PATH, timeout=20)
                     _live = _db_pre.execute(SQL_LIVE, (account_id,)).fetchall()
                     _db_pre.close()
                     if _live:
@@ -1331,7 +1333,7 @@ async def _task_sender_inner():
                 # B: чат уже посещённый сегодня (activity_log)
                 if not _read_done:
                     try:
-                        _db_pre2 = sqlite3.connect(DB_PATH, timeout=5)
+                        _db_pre2 = sqlite3.connect(DB_PATH, timeout=20)
                         _today = _db_pre2.execute(SQL_TODAY, (session,)).fetchall()
                         _db_pre2.close()
                         if _today:
@@ -1531,6 +1533,7 @@ async def scheduler():
         if key_date != _schedule_date:
             _daily_schedule = _build_daily_schedule(key_date)
             _schedule_date = key_date
+            last_run.clear()
             log.info(f"[scheduler] расписание на {key_date}:")
             for h, m, tasks in _daily_schedule:
                 log.info(f"  {h:02d}:{m:02d} → {', '.join(tasks)}")
@@ -1554,10 +1557,12 @@ async def scheduler():
         for hour, minute, tasks in _daily_schedule:
             if now.hour == hour and now.minute == minute:
                 for task in tasks:
-                    key = f"{task}_{key_date}"
-                    if last_run.get(task) == key:
+                    # Ключ включает час:минуту слота — иначе второй и третий заход одной и той
+                    # же задачи считался бы "уже было сегодня"
+                    slot_key = f"{task}_{key_date}_{hour:02d}{minute:02d}"
+                    if last_run.get(slot_key):
                         continue
-                    last_run[task] = key
+                    last_run[slot_key] = True
                     log.info(f"Запускаю задачу: {task} ({hour:02d}:{minute:02d})")
                     _launch_task(task)
 
@@ -1582,7 +1587,7 @@ async def keepalive():
                 clients.pop(session, None)
                 bad_auth_sessions.add(session)
                 try:
-                    _c = sqlite3.connect(DB_PATH, timeout=10)
+                    _c = sqlite3.connect(DB_PATH, timeout=20)
                     _c.execute("UPDATE accounts SET status='auth_error' WHERE session=?", (session,))
                     _c.commit()
                     _c.close()
@@ -1610,7 +1615,7 @@ async def keepalive():
                 if not reconnected and fails >= 3:
                     clients.pop(session, None)
                     try:
-                        _c = sqlite3.connect(DB_PATH, timeout=10)
+                        _c = sqlite3.connect(DB_PATH, timeout=20)
                         _c.execute("UPDATE accounts SET status='disconnected' WHERE session=?", (session,))
                         _c.commit()
                         _c.close()
@@ -1649,7 +1654,7 @@ async def auto_resume_loop():
         try:
             from datetime import datetime as _dt, timezone as _tz
             now_str = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
-            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn = sqlite3.connect(DB_PATH, timeout=20)
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT id, session FROM accounts WHERE status='paused' AND paused_until IS NOT NULL AND paused_until < ?",
@@ -1677,7 +1682,7 @@ async def health_loop():
         try:
             now = now_msk()
             today = now.strftime("%Y-%m-%d")
-            conn = sqlite3.connect(DB_PATH, timeout=15)
+            conn = sqlite3.connect(DB_PATH, timeout=25)
 
             # Проверяем рассылку: если уже после 14:30 МСК и 0 отправлено сегодня
             if now.hour >= 14:
@@ -1723,7 +1728,7 @@ async def main():
 
     # WAL mode — разрешает параллельные читатели, меньше DB locked
     try:
-        _wc = sqlite3.connect(DB_PATH, timeout=10)
+        _wc = sqlite3.connect(DB_PATH, timeout=20)
         _wc.execute("PRAGMA journal_mode=WAL")
         _wc.close()
     except Exception:
@@ -1738,7 +1743,7 @@ async def main():
 
     # Сброс disconnected → active при старте (могли вылететь из-за db-locked)
     try:
-        _rc = sqlite3.connect(DB_PATH, timeout=10)
+        _rc = sqlite3.connect(DB_PATH, timeout=20)
         affected = _rc.execute(
             "UPDATE accounts SET status='active' WHERE status='disconnected'"
         ).rowcount
@@ -1752,7 +1757,7 @@ async def main():
     # Сброс зависших 'sending' → 'new' (контакты, которые были заблокированы
     # предыдущим запуском демона во время pre-send ритуала но так и не отправились)
     try:
-        _sc = sqlite3.connect(DB_PATH, timeout=10)
+        _sc = sqlite3.connect(DB_PATH, timeout=20)
         stuck = _sc.execute(
             "UPDATE contacts SET status='new' WHERE status='sending'"
         ).rowcount
@@ -1810,17 +1815,42 @@ async def main():
     async def connect_batch(batch):
         await asyncio.gather(*[connect_one(a, j) for j, a in enumerate(batch)])
 
+    def register_incoming_handler(client, session, me):
+        """Регистрирует обработчик входящих для (пере)подключённого клиента.
+        Вызывается из connect_one — покрывает и стартовый батч, и reconnect_loop,
+        иначе аккаунты, поднятые позже стартового батча, никогда не ловят ответы."""
+        try:
+            _c = sqlite3.connect(DB_PATH, timeout=20)
+            _row = _c.execute("SELECT id FROM accounts WHERE session=?", (session,)).fetchone()
+            _c.close()
+        except Exception as _e:
+            log.warning(f"[incoming] {session}: не удалось получить account_id: {_e}")
+            return
+        if not _row:
+            return
+        _acc_id = _row[0]
+        acc_clients[_acc_id] = client
+
+        @client.on(events.NewMessage(incoming=True))
+        async def _on_msg(ev, _c=client, _aid=_acc_id, _m=me):
+            await handle_incoming(_c, _aid, _m, ev)
+
+        log.info(f"[incoming] хендлер зарегистрирован: {session}")
+
     async def connect_one(acc, idx: int = 0):
         session = acc["session"]
         proxy = acc.get("proxy")
         proxy_arg = tuple(proxy) if proxy else None
+        if proxy_arg is None:
+            log.warning(f"[{session}] нет прокси — в спячку, без прокси не подключаем")
+            return
         # Маленький стаггер внутри батча: 0.5с между аккаунтами
         await asyncio.sleep(idx * 0.5)
         # QR lockfile: если идёт авторизация — не подключаем, чтобы не вызвать AuthKeyDuplicated
         if Path(f"/tmp/qr_lock_{session}").exists():
             log.info(f"[{session}] QR авторизация в процессе — пропускаю подключение")
             return
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 client = TelegramClient(
                     str(OUTREACH_DIR / session),
@@ -1834,7 +1864,7 @@ async def main():
                     log.error(f"  ❌ {session}: get_me() вернул None — сессия устарела, нужна QR-реавторизация")
                     await client.disconnect()
                     try:
-                        _c = sqlite3.connect(DB_PATH, timeout=10)
+                        _c = sqlite3.connect(DB_PATH, timeout=20)
                         _c.execute("UPDATE accounts SET status='auth_error' WHERE session=?", (session,))
                         _c.commit()
                         _c.close()
@@ -1843,9 +1873,10 @@ async def main():
                     tg_alert(f"🔑 <b>Сессия устарела:</b> {session[-12:]}\nget_me() вернул None — нужна QR-реавторизация")
                     return
                 clients[session] = (client, me)
+                register_incoming_handler(client, session, me)
                 log.info(f"  ✅ {me.first_name} ({session})")
                 try:
-                    _c = sqlite3.connect(DB_PATH, timeout=10)
+                    _c = sqlite3.connect(DB_PATH, timeout=20)
                     _c.execute("UPDATE accounts SET status='active' WHERE session=? AND status NOT IN ('dead','auth_error')", (session,))
                     _c.commit()
                     _c.close()
@@ -1877,7 +1908,7 @@ async def main():
                 log.error(f"  ❌ {session}: AuthKeyDuplicatedError — auth key отозван, нужна повторная авторизация")
                 bad_auth_sessions.add(session)
                 try:
-                    _c = sqlite3.connect(DB_PATH, timeout=10)
+                    _c = sqlite3.connect(DB_PATH, timeout=20)
                     _c.execute("UPDATE accounts SET status='auth_error' WHERE session=?", (session,))
                     _c.commit()
                     _c.close()
@@ -1890,9 +1921,9 @@ async def main():
                     await client.disconnect()
                 except Exception:
                     pass
-                if attempt < 2 and ("database is locked" in err or "timed out" in err.lower() or "Proxy" in err):
-                    wait = 15 + attempt * 15
-                    log.warning(f"  ⚠️  {session}: {e} — retry {attempt+1}/3 через {wait}с")
+                if attempt < 5 and ("database is locked" in err or "timed out" in err.lower() or "Proxy" in err):
+                    wait = 15 + attempt * 20
+                    log.warning(f"  ⚠️  {session}: {e} — retry {attempt+1}/6 через {wait}с")
                     await asyncio.sleep(wait)
                 else:
                     log.error(f"  ❌ {session}: {e}")
@@ -1909,29 +1940,16 @@ async def main():
     log.info(f"Подключено: {len(clients)}/{len(accs)}")
     tg_alert(f"✅ Daemon запущен: {len(clients)}/{len(accs)} аккаунтов подключено")
 
-    # ── Регистрируем обработчики входящих сообщений ───────────────────────────
-    try:
-        _c = sqlite3.connect(DB_PATH, timeout=10)
-        _c.row_factory = sqlite3.Row
-        for _session, (_client, _me) in clients.items():
-            _row = _c.execute("SELECT id FROM accounts WHERE session=?", (_session,)).fetchone()
-            if not _row:
-                continue
-            _acc_id = _row["id"]
-            acc_clients[_acc_id] = _client
-
-            @_client.on(events.NewMessage(incoming=True))
-            async def _on_msg(ev, _c=_client, _aid=_acc_id, _m=_me):
-                await handle_incoming(_c, _aid, _m, ev)
-        _c.close()
-        log.info(f"[incoming] хендлеры зарегистрированы на {len(acc_clients)} аккаунтах")
-    except Exception as _e:
-        log.warning(f"[incoming] ошибка регистрации хендлеров: {_e}")
+    # Регистрация хендлеров входящих теперь происходит внутри connect_one() —
+    # для стартового батча выше и для reconnect_loop() ниже одинаково.
+    log.info(f"[incoming] хендлеры зарегистрированы на {len(acc_clients)} аккаунтах")
 
     async def reconnect_loop():
         """Каждые 5 мин переподключает аккаунты, выпавшие при старте (db locked, proxy timeout и т.д.).
         Аккаунты со статусом dead/disconnected/auth_error не трогаем."""
         reconnect_fail_count: dict[str, int] = {}
+        proxy_swap_count: dict[str, int] = {}
+        proxy_exhausted_sessions: set[str] = set()
         while running:
             await asyncio.sleep(300)
             # Подхватываем новые аккаунты, добавленные в accounts.json после старта
@@ -1948,13 +1966,19 @@ async def main():
             missing = [a for a in accs_map.values() if a["session"] not in clients]
             if not missing:
                 continue
+            # Сбрасываем счётчики для тех, кто больше не в missing (переподключились)
+            _missing_sessions = {a["session"] for a in missing}
+            for _s in list(reconnect_fail_count):
+                if _s not in _missing_sessions:
+                    reconnect_fail_count.pop(_s, None)
+                    proxy_swap_count.pop(_s, None)
             # Не трогаем dead, disconnected, auth_error и аккаунты с отозванным ключом
             to_reconnect = []
             try:
-                _c = sqlite3.connect(DB_PATH, timeout=10)
+                _c = sqlite3.connect(DB_PATH, timeout=20)
                 _c.row_factory = sqlite3.Row
                 for acc in missing:
-                    if acc["session"] in bad_auth_sessions:
+                    if acc["session"] in bad_auth_sessions or acc["session"] in proxy_exhausted_sessions:
                         continue
                     row = _c.execute(
                         "SELECT status FROM accounts WHERE session=?", (acc["session"],)
@@ -1975,10 +1999,15 @@ async def main():
                 if reconnect_fail_count[session] < 2 or not acc.get("proxy"):
                     continue
                 reconnect_fail_count[session] = 0
+                if proxy_swap_count.get(session, 0) >= 3:
+                    proxy_exhausted_sessions.add(session)
+                    log.warning(f"[reconnect] {session[-12:]}: 3 разных прокси не помогли — нужна ручная замена")
+                    tg_alert(f"🆘 {session[-12:]}: 3 прокси подряд не сработали — нужна ручная замена прокси")
+                    continue
                 old_proxy = acc["proxy"]
                 spare = None
                 try:
-                    _sc = sqlite3.connect(DB_PATH, timeout=5)
+                    _sc = sqlite3.connect(DB_PATH, timeout=20)
                     _sr = _sc.execute(
                         "SELECT protocol, host, port, username, password FROM proxies "
                         "WHERE assigned_to IS NULL AND active=1 ORDER BY RANDOM() LIMIT 1"
@@ -1997,8 +2026,8 @@ async def main():
                 if not spare:
                     log.warning(f"[reconnect] {session[-12:]}: прокси {old_proxy[1]} недоступен, резервов нет")
                     continue
-                log.info(f"[reconnect] {session[-12:]}: прокси {old_proxy[1]} недоступен → резерв {spare[1]}")
-                tg_alert(f"⚠️ Прокси {old_proxy[1]} для {session[-12:]} недоступен при переподключении → резерв {spare[1]}")
+                proxy_swap_count[session] = proxy_swap_count.get(session, 0) + 1
+                log.info(f"[reconnect] {session[-12:]}: прокси {old_proxy[1]} недоступен → резерв {spare[1]} (замена #{proxy_swap_count[session]})")
                 acc["proxy"] = spare
                 try:
                     _af = OUTREACH_DIR / "accounts.json"
@@ -2101,7 +2130,6 @@ async def main():
                         host_o, port_o = original_proxy[1], original_proxy[2]
                         if await check_proxy_tcp(host_o, port_o):
                             log.info(f"[proxy] {session[-12:]}: прокси {host_o} восстановлен — возвращаю")
-                            tg_alert(f"✅ Прокси {host_o} для {session[-12:]} восстановлен")
                             db_log(session, "proxy_up", f"{host_o}:{port_o}")
                             proxy_overrides.pop(session, None)
                             if session in clients:
@@ -2128,7 +2156,7 @@ async def main():
                 proxy_fail_count.pop(fail_key, None)
                 spare = None
                 try:
-                    _sc = sqlite3.connect(DB_PATH, timeout=5)
+                    _sc = sqlite3.connect(DB_PATH, timeout=20)
                     _sr = _sc.execute(
                         "SELECT protocol, host, port, username, password FROM proxies "
                         "WHERE assigned_to IS NULL AND active=1 ORDER BY RANDOM() LIMIT 1"
@@ -2137,12 +2165,12 @@ async def main():
                         spare = [_sr[0], _sr[1], _sr[2], True, _sr[3], _sr[4]]
                         _sc.execute("UPDATE proxies SET assigned_to=? WHERE host=? AND port=?",
                                     (session, _sr[1], _sr[2]))
-                        if session in proxy_overrides and proxy_overrides[session]:
-                            old_h = proxy_overrides[session][1]
-                            old_p = proxy_overrides[session][2]
-                            _sc.execute(
-                                "UPDATE proxies SET assigned_to=NULL WHERE host=? AND port=? AND assigned_to=?",
-                                (old_h, old_p, session))
+                        # Освобождаем прокси, который только что признан мёртвым (host/port) —
+                        # неважно исходный он из accounts.json или уже был предыдущей заменой,
+                        # иначе он остаётся висеть "занятым" в базе навсегда.
+                        _sc.execute(
+                            "UPDATE proxies SET assigned_to=NULL WHERE host=? AND port=? AND assigned_to=?",
+                            (host, port, session))
                     _sc.commit()
                     _sc.close()
                 except Exception as _pe:
@@ -2156,14 +2184,11 @@ async def main():
 
                 if spare:
                     log.info(f"[proxy] {session[-12:]}: {host} → резерв {spare[1]}")
-                    tg_alert(f"⚠️ Прокси {host} упал → {session[-12:]} на резерв {spare[1]}")
                     db_log(session, "proxy_down", f"{host}:{port} → {spare[1]}")
                     await connect_one({**acc, "proxy": spare})
                 else:
-                    log.warning(f"[proxy] {session[-12:]}: {host} упал, резервов нет → прямое соединение")
-                    tg_alert(f"⚠️ Прокси {host} упал, резервов нет → {session[-12:]} напрямую")
-                    db_log(session, "proxy_down", f"{host}:{port} → прямое")
-                    await connect_one({**acc, "proxy": None})
+                    log.warning(f"[proxy] {session[-12:]}: {host} упал, резервов нет → в спячку до появления прокси")
+                    db_log(session, "proxy_down", f"{host}:{port} → спячка")
 
             await asyncio.sleep(300)
 

@@ -62,6 +62,40 @@ function getAccountTier(acc: OutreachAccount): Tier {
   return 'purple'
 }
 
+function ageDays(acc: OutreachAccount): number | null {
+  if (!acc.created_at) return null
+  const now = new Date()
+  const created = new Date(acc.created_at)
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const createdUTC = Date.UTC(created.getUTCFullYear(), created.getUTCMonth(), created.getUTCDate())
+  return Math.floor((todayUTC - createdUTC) / 86_400_000) + 1
+}
+
+function recommendation(acc: OutreachAccount, stats: { sent: number; rate: number | null }) {
+  const tier = getAccountTier(acc)
+  if (acc.status === 'disconnected') return { text: 'Сессия протухла — нужна переавторизация через QR', color: 'text-orange-300 bg-orange-950/40' }
+  if (acc.status === 'auth_error') return { text: 'Auth key отозван — нужна переавторизация через QR', color: 'text-orange-300 bg-orange-950/40' }
+  if (tier === 'black') return { text: 'Сессия убита — ничего не пишем, нужна авторизация', color: 'text-neutral-400 bg-black' }
+  if (tier === 'new') return { text: 'Новый аккаунт — дни 1-2, полная тишина', color: 'text-neutral-400 bg-neutral-900' }
+  if (tier === 'red') return { text: `Заморожен — ничего не пишем, ждём 24ч${acc.paused_until ? `. Выйдет ${fmt(acc.paused_until)}` : ''}`, color: 'text-red-300 bg-red-950/40' }
+  if (tier === 'yellow') return { text: 'Предупреждение было < 24ч назад — притормаживаем, макс 2/день', color: 'text-yellow-300 bg-yellow-950/40' }
+  if (tier === 'blue') {
+    const d = ageDays(acc) ?? 2
+    return { text: `День ${d} — прогрев, не более 3 сообщений/день`, color: 'text-blue-300 bg-blue-950/40' }
+  }
+  if (tier === 'green') {
+    const d = ageDays(acc) ?? 8
+    return { text: `День ${d} — нарабатываем историю, до 5/день`, color: 'text-green-300 bg-green-950/40' }
+  }
+  if (tier === 'orange') {
+    const d = ageDays(acc) ?? 15
+    return { text: `День ${d} — ускоряемся, до 7/день`, color: 'text-orange-300 bg-orange-950/40' }
+  }
+  const d = ageDays(acc) ?? 22
+  if (stats.sent >= 40) return { text: `День ${d} — грузим по максимуму: ${stats.sent} DM, конверсия ${stats.rate ?? 0}%`, color: 'text-purple-300 bg-purple-950/40' }
+  return { text: `День ${d} — грузим по максимуму, до 10/день`, color: 'text-purple-300 bg-purple-950/40' }
+}
+
 const TIER_META: Record<Tier, { label: string; action: string; headerBg: string; countBg: string }> = {
   purple: { label: '🟣 Топ-аккаунты', action: 'День 22+ — грузим по максимуму, до 10/день', headerBg: 'border-purple-900 bg-purple-950/40', countBg: 'bg-purple-900 text-purple-300' },
   orange: { label: '🟠 Ускоряемся', action: 'Дни 15-21 — ускоряемся, до 7/день', headerBg: 'border-orange-900 bg-orange-950/40', countBg: 'bg-orange-900 text-orange-300' },
@@ -81,6 +115,7 @@ function AccountCard({ acc, sentByAccount }: { acc: OutreachAccount; sentByAccou
   const isPaused = tier === 'black' || tier === 'new' || acc.status === 'disconnected' || acc.status === 'auth_error'
   const lifetime = sentByAccount.get(acc.session) ?? { sent: 0, replied: 0 }
   const rate = lifetime.sent > 0 ? Math.round((lifetime.replied / lifetime.sent) * 100) : null
+  const rec = recommendation(acc, { sent: lifetime.sent, rate })
 
   return (
     <div className="flex flex-col gap-2.5 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
@@ -128,6 +163,10 @@ function AccountCard({ acc, sentByAccount }: { acc: OutreachAccount; sentByAccou
         {(acc.flood_count ?? 0) > 0 && (
           <span className="ml-auto rounded-full bg-red-950 px-2 py-0.5 text-xs font-semibold text-red-300">🚨 флуд ×{acc.flood_count}</span>
         )}
+      </div>
+
+      <div className={`rounded-lg px-2.5 py-1.5 text-xs font-medium leading-snug ${rec.color}`}>
+        {rec.text}
       </div>
     </div>
   )

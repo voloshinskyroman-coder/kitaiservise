@@ -15,7 +15,7 @@ TMP_DIR       = Path("/tmp/scan_sessions")
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -118,10 +118,26 @@ async def scan_account(acc_cfg: dict, contacts_by_tg_id: dict, contacts_by_uname
     return found
 
 
+def get_disconnected_sessions() -> set:
+    """Только аккаунты, которых демон сам исключил из живого пула (status='disconnected').
+    Копия session-файла содержит тот же auth_key, что и оригинал — подключаться этой копией
+    можно ТОЛЬКО пока демон точно не держит по этому аккаунту живое соединение, иначе
+    Telegram видит два одновременных подключения одним ключом и отзывает его (AuthKeyDuplicated)."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT session FROM accounts WHERE status='disconnected'").fetchall()
+        return {r["session"] for r in rows}
+
+
 async def main():
     TMP_DIR.mkdir(exist_ok=True)
 
     accounts = json.loads(ACCOUNTS_FILE.read_text())
+    disconnected = get_disconnected_sessions()
+    skipped = [a["session"] for a in accounts if a["session"] not in disconnected]
+    accounts = [a for a in accounts if a["session"] in disconnected]
+    print(f"Пропускаю {len(skipped)} аккаунтов, которые сейчас живые в демоне (не трогаем, чтобы не словить AuthKeyDuplicated)")
+    print(f"Сканирую только {len(accounts)} отключённых аккаунтов\n")
+
     contacts = get_sent_contacts()
     contacts_by_tg_id  = {c["tg_id"]: c for c in contacts if c["tg_id"]}
     contacts_by_uname  = {c["username"].lower(): c for c in contacts if c["username"]}

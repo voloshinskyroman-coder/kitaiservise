@@ -173,7 +173,7 @@ def run():
     except Exception as e:
         print(f"[sync] accounts.json error: {e}")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
 
     # ── accounts ──────────────────────────────────────────────────────────────
@@ -227,7 +227,10 @@ def run():
     # ── contacts ──────────────────────────────────────────────────────────────
     id_to_session = {r["id"]: r["session"] for r in conn.execute("SELECT id, session FROM accounts")}
     contact_rows = []
-    for r in conn.execute("SELECT * FROM contacts").fetchall():
+    for r in conn.execute(
+        "SELECT * FROM contacts WHERE imported_at >= datetime('now','-30 days') "
+        "OR sent_at >= datetime('now','-30 days') OR replied_at >= datetime('now','-30 days')"
+    ).fetchall():
         contact_rows.append({
             "id": r["id"], "tg_id": r["tg_id"], "username": r["username"],
             "status": r["status"] or "new", "account_id": r["account_id"],
@@ -240,7 +243,7 @@ def run():
 
     # ── messages ──────────────────────────────────────────────────────────────
     msg_rows = []
-    for r in conn.execute("SELECT * FROM messages").fetchall():
+    for r in conn.execute("SELECT * FROM messages WHERE sent_at >= datetime('now','-30 days')").fetchall():
         msg_rows.append({
             "id": r["id"], "contact_id": r["contact_id"], "account_id": r["account_id"],
             "direction": r["direction"], "text": r["text"],
@@ -251,7 +254,7 @@ def run():
 
     # ── conversations ─────────────────────────────────────────────────────────
     conv_rows = []
-    for r in conn.execute("SELECT * FROM conversations").fetchall():
+    for r in conn.execute("SELECT * FROM conversations WHERE updated_at >= datetime('now','-30 days')").fetchall():
         conv_rows.append({
             "id": r["id"], "contact_id": r["contact_id"], "account_id": r["account_id"],
             "status": r["status"] or "open", "ai_draft": r["ai_draft"],
@@ -294,7 +297,7 @@ def run():
 
     # ── backfill has_avatar для аккаунтов у которых аватар уже есть в Supabase ─
     try:
-        conn2 = sqlite3.connect(DB_PATH)
+        conn2 = sqlite3.connect(DB_PATH, timeout=20)
         for sb_acc in sb_accounts:
             if sb_acc.get("avatar_url"):
                 conn2.execute(

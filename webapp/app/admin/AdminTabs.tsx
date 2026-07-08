@@ -12,9 +12,9 @@ import type { CrmCard } from '@/lib/queries/crm'
 type Tab = 'leads' | 'funnel' | 'outreach' | 'crm'
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'outreach', label: '📤 Рассылка' },
   { key: 'leads', label: '📋 Заявки' },
   { key: 'funnel', label: '🔻 Воронка' },
-  { key: 'outreach', label: '📤 Рассылка' },
   { key: 'crm', label: '🗂 CRM' },
 ]
 
@@ -29,7 +29,7 @@ export function AdminTabs({
   outreach: OutreachData
   crm: CrmCard[]
 }) {
-  const [tab, setTab] = useState<Tab>('leads')
+  const [tab, setTab] = useState<Tab>('outreach')
 
   return (
     <div>

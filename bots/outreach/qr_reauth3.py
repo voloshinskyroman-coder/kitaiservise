@@ -94,7 +94,7 @@ async def reauth(session_name):
         await client.disconnect()
         shutil.copy2(tmp_path + '.session', str(OUTREACH_DIR / (session_name + '.session')))
 
-        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn = sqlite3.connect(DB_PATH, timeout=20)
         conn.execute("UPDATE accounts SET status='active' WHERE session=?", (session_name,))
         conn.commit(); conn.close()
 

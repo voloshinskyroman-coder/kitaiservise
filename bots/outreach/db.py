@@ -6,9 +6,10 @@ DB_PATH = Path(os.environ.get("OUTREACH_DIR", Path(__file__).parent)) / "outreac
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=20000")
     return conn
 
 
@@ -192,6 +193,7 @@ def get_pending_contacts(account_id: int, limit: int = 100) -> list[dict]:
             WHERE status IN ('new', 'failed') AND replied_at IS NULL AND (account_id IS NULL OR account_id=?)
             ORDER BY
                 CASE WHEN status='new' THEN 0 ELSE 1 END ASC,
+                imported_at ASC,
                 CASE WHEN last_seen IS NOT NULL THEN 0 ELSE 1 END ASC,
                 last_seen DESC,
                 id ASC
