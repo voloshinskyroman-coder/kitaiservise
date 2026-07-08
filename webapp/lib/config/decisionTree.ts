@@ -97,11 +97,15 @@ const READINESS_OPTIONS: QuestionOption[] = [
   { value: 'unknown', label: 'Пока неизвестно' },
 ]
 
-const DESTINATION_TYPE_OPTIONS: QuestionOption[] = [
-  { value: 'city', label: 'Город РФ' },
-  { value: 'warehouse', label: 'До склада' },
-  { value: 'door', label: 'До двери' },
+const DESTINATION_HUB_OPTIONS: QuestionOption[] = [
+  { value: 'vladivostok', label: 'Владивосток (Дальний Восток)' },
+  { value: 'moscow', label: 'Москва (Центральный регион)' },
 ]
+
+const DESTINATION_HUB_CITY: Record<string, string> = {
+  vladivostok: 'Владивосток',
+  moscow: 'Москва',
+}
 
 export const DOCUMENTS_WHITE_OPTIONS: QuestionOption[] = [
   { value: 'invoice', label: 'Инвойс', description: 'Счёт от поставщика с перечнем товаров и их стоимостью.' },
@@ -427,21 +431,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'text',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ origin_city: raw || null }),
-    next: () => 'ct1_destination_type',
+    next: () => 'ct1_destination',
   },
-  ct1_destination_type: {
-    id: 'ct1_destination_type',
-    prompt: 'Куда доставить?',
+  ct1_destination: {
+    id: 'ct1_destination',
+    prompt: 'Куда доставить ваш груз?\nДоставка по России рассчитывается отдельно.',
     type: 'choice',
-    options: DESTINATION_TYPE_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ destination_type: raw as Shipment['destination_type'] }),
-    next: () => 'ct1_destination_city',
-  },
-  ct1_destination_city: {
-    id: 'ct1_destination_city',
-    prompt: 'Уточните город',
-    type: 'text',
-    applyAnswer: (_shipment, raw) => ({ destination_city: raw }),
+    options: DESTINATION_HUB_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ destination_city: DESTINATION_HUB_CITY[raw] ?? raw }),
     next: () => 'ct1_delivery_mode',
   },
   ct1_delivery_mode: {
@@ -569,21 +566,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'text',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ origin_city: raw || null }),
-    next: () => 'ct2_destination_type',
+    next: () => 'ct2_destination',
   },
-  ct2_destination_type: {
-    id: 'ct2_destination_type',
-    prompt: 'Куда доставить?',
+  ct2_destination: {
+    id: 'ct2_destination',
+    prompt: 'Куда доставить ваш груз?\nДоставка по России рассчитывается отдельно.',
     type: 'choice',
-    options: DESTINATION_TYPE_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ destination_type: raw as Shipment['destination_type'] }),
-    next: () => 'ct2_destination_city',
-  },
-  ct2_destination_city: {
-    id: 'ct2_destination_city',
-    prompt: 'Уточните город',
-    type: 'text',
-    applyAnswer: (_shipment, raw) => ({ destination_city: raw }),
+    options: DESTINATION_HUB_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ destination_city: DESTINATION_HUB_CITY[raw] ?? raw }),
     next: () => 'ct2_delivery_mode',
   },
   ct2_delivery_mode: {
