@@ -338,7 +338,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   // Категорию/код ТН ВЭД/документы дальше определяет AI-анализ (tn.md), а не отдельный выбор.
   ct0_product: {
     id: 'ct0_product',
-    prompt: 'Что хотите привезти? Вставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар вам нужен.',
+    prompt: 'Что хотите привезти?\nВставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар вам нужен.',
     type: 'text',
     autocomplete: true,
     withAttachment: true,
@@ -406,7 +406,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_product: {
     id: 'ct1_product',
-    prompt: 'Что хотите привезти? Вставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар вам нужен.',
+    prompt: 'Что хотите привезти?\nВставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар вам нужен.',
     type: 'text',
     autocomplete: true,
     withAttachment: true,
@@ -556,7 +556,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
 
   ct2_product: {
     id: 'ct2_product',
-    prompt: 'Что перевозим? Вставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар везёте.',
+    prompt: 'Что перевозим?\nВставьте ссылку на товар, прикрепите инвойс от поставщика или напишите, какой товар везёте.',
     type: 'text',
     autocomplete: true,
     withAttachment: true,

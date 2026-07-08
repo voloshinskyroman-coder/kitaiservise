@@ -15,6 +15,13 @@ function splitOptionLabel(opt: QuestionOption): { main: string; detail: string |
   return { main: match[1], detail: match[2] }
 }
 
+// Некоторые вопросы совмещают короткий заголовок с более длинным пояснением (см. decisionTree.ts) —
+// разделены переносом строки, чтобы не сливаться в один плотный абзац.
+function splitPrompt(prompt: string): { heading: string; detail: string | null } {
+  const [heading, ...rest] = prompt.split('\n')
+  return { heading, detail: rest.join('\n') || null }
+}
+
 // Фото с телефона обычно 3000-4000px по стороне — для vision-анализа этого не нужно,
 // только раздувает токены и время загрузки. PDF и уже маленькие файлы не трогаем.
 async function compressIfImage(file: File): Promise<File> {
@@ -248,7 +255,15 @@ export default function QuizPage() {
 
         {question && question.type !== 'info' && (
           <div className="flex flex-col gap-6">
-            <h1 className="text-xl font-semibold leading-snug tracking-tight">{question.prompt}</h1>
+            {(() => {
+              const { heading, detail } = splitPrompt(question.prompt)
+              return (
+                <div className="flex flex-col gap-2">
+                  <h1 className="text-xl font-semibold leading-snug tracking-tight">{heading}</h1>
+                  {detail && <p className="text-sm leading-relaxed text-muted">{detail}</p>}
+                </div>
+              )
+            })()}
 
             {question.type === 'choice' && (
               <div className="flex flex-col gap-3">
@@ -395,6 +410,7 @@ export default function QuizPage() {
                         <span className="text-sm font-medium text-muted">
                           {uploading ? 'Загружаем...' : 'Прикрепить инвойс или упаковочный лист (необязательно)'}
                         </span>
+                        {!uploading && <span className="text-xs text-muted/70">Фото, PDF, Excel, CSV или TXT — до 10 МБ</span>}
                         <input
                           type="file"
                           accept="image/*,application/pdf,.xlsx,.xls,.csv,.txt"
