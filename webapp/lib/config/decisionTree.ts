@@ -82,7 +82,7 @@ const DELIVERY_MODE_OPTIONS: QuestionOption[] = [
 ]
 
 const READINESS_OPTIONS: QuestionOption[] = [
-  { value: 'ready', label: 'Уже готов' },
+  { value: 'ready', label: 'Уже готов, собран и ждёт отправки' },
   { value: 'week', label: 'Через неделю' },
   { value: 'month', label: 'Через месяц' },
   { value: 'unknown', label: 'Пока неизвестно' },
@@ -102,7 +102,6 @@ export const DOCUMENTS_WHITE_OPTIONS: QuestionOption[] = [
   { value: 'invoice', label: 'Инвойс', description: 'Счёт от поставщика с перечнем товаров и их стоимостью.' },
   { value: 'packing_list', label: 'Упаковочный лист', description: 'Документ с количеством мест, весом и размерами груза.' },
   { value: 'contract', label: 'Контракт', description: 'Договор между покупателем и поставщиком на поставку товара.' },
-  { value: 'hs_code', label: 'Код ТН ВЭД', description: 'Код товара для таможенного оформления. Если не знаете — поможем определить.' },
   {
     value: 'certificates',
     label: 'Сертификаты / декларации соответствия',
@@ -442,7 +441,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_cost: {
     id: 'ct1_cost',
-    prompt: 'Стоимость товара в юанях? Можно пропустить.',
+    prompt: 'Стоимость партии товара в юанях?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ product_cost: toNumberOrNull(raw), currency: 'CNY' }),
@@ -450,7 +449,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_weight: {
     id: 'ct1_weight',
-    prompt: 'Вес (кг)? Можно пропустить.',
+    prompt: 'Вес (кг)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ weight_kg: toNumberOrNull(raw) }),
@@ -458,18 +457,10 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_volume: {
     id: 'ct1_volume',
-    prompt: 'Объём (м³)? Можно пропустить.',
+    prompt: 'Объём (м³)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ volume_m3: toNumberOrNull(raw) }),
-    next: () => 'ct1_package_count',
-  },
-  ct1_package_count: {
-    id: 'ct1_package_count',
-    prompt: 'Количество мест? Можно пропустить.',
-    type: 'number',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({ package_count: toNumberOrNull(raw) }),
     next: () => 'ct1_readiness',
   },
   ct1_readiness: {
@@ -492,7 +483,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
       documents: parseMultiChoice(raw),
       customs_contract_holder: CONTRACT_HOLDER_BY_PAYMENT_METHOD[shipment.payment_method ?? ''] ?? null,
     }),
-    next: () => 'ct1_non_tariff',
+    next: () => 'ct1_extra_services',
   },
   ct1_documents_cargo: {
     id: 'ct1_documents_cargo',
@@ -501,18 +492,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     optional: true,
     options: DOCUMENTS_CARGO_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ documents: parseMultiChoice(raw) }),
-    next: () => 'ct1_non_tariff',
-  },
-  ct1_non_tariff: {
-    id: 'ct1_non_tariff',
-    prompt: 'Какие дополнительные документы или маркировка могут понадобиться?',
-    type: 'multi-choice',
-    optional: true,
-    options: NON_TARIFF_OPTIONS,
-    // AI уже прикинул, какая сертификация/маркировка обычно нужна для этого товара (tn.md) —
-    // предзаполняем галочки, клиент может изменить.
-    preselect: (shipment) => shipment.ai_suggested_non_tariff,
-    applyAnswer: (_shipment, raw) => ({ non_tariff_services: parseMultiChoice(raw) }),
     next: () => 'ct1_extra_services',
   },
   ct1_extra_services: {
@@ -562,7 +541,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_cost: {
     id: 'ct2_cost',
-    prompt: 'Стоимость товара в юанях? Можно пропустить.',
+    prompt: 'Стоимость партии товара в юанях?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ product_cost: toNumberOrNull(raw), currency: 'CNY' }),
@@ -570,7 +549,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_weight: {
     id: 'ct2_weight',
-    prompt: 'Вес (кг)? Можно пропустить.',
+    prompt: 'Вес (кг)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ weight_kg: toNumberOrNull(raw) }),
@@ -578,18 +557,10 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_volume: {
     id: 'ct2_volume',
-    prompt: 'Объём (м³)? Можно пропустить.',
+    prompt: 'Объём (м³)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ volume_m3: toNumberOrNull(raw) }),
-    next: () => 'ct2_package_count',
-  },
-  ct2_package_count: {
-    id: 'ct2_package_count',
-    prompt: 'Количество мест? Можно пропустить.',
-    type: 'number',
-    optional: true,
-    applyAnswer: (_shipment, raw) => ({ package_count: toNumberOrNull(raw) }),
     next: () => 'ct2_readiness',
   },
   ct2_readiness: {
@@ -616,7 +587,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     optional: true,
     options: DOCUMENTS_CARGO_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ documents: parseMultiChoice(raw) }),
-    next: () => 'ct2_non_tariff',
+    next: () => 'ct2_logistics_method',
   },
   ct2_contract_holder: {
     id: 'ct2_contract_holder',
@@ -624,16 +595,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: CONTRACT_HOLDER_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ customs_contract_holder: raw as Shipment['customs_contract_holder'] }),
-    next: () => 'ct2_non_tariff',
-  },
-  ct2_non_tariff: {
-    id: 'ct2_non_tariff',
-    prompt: 'Какие дополнительные документы или маркировка могут понадобиться?',
-    type: 'multi-choice',
-    optional: true,
-    options: NON_TARIFF_OPTIONS,
-    preselect: (shipment) => shipment.ai_suggested_non_tariff,
-    applyAnswer: (_shipment, raw) => ({ non_tariff_services: parseMultiChoice(raw) }),
     next: () => 'ct2_logistics_method',
   },
   ct2_logistics_method: {
