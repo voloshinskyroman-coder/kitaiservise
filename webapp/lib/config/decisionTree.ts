@@ -446,7 +446,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_weight: {
     id: 'ct1_weight',
-    prompt: 'Вес (кг)?',
+    prompt: 'Вес партии (кг)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ weight_kg: toNumberOrNull(raw) }),
@@ -454,7 +454,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_volume: {
     id: 'ct1_volume',
-    prompt: 'Объём (м³)?',
+    prompt: 'Объём партии (м³)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ volume_m3: toNumberOrNull(raw) }),
@@ -546,7 +546,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_weight: {
     id: 'ct2_weight',
-    prompt: 'Вес (кг)?',
+    prompt: 'Вес партии (кг)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ weight_kg: toNumberOrNull(raw) }),
@@ -554,7 +554,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_volume: {
     id: 'ct2_volume',
-    prompt: 'Объём (м³)?',
+    prompt: 'Объём партии (м³)?',
     type: 'number',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ volume_m3: toNumberOrNull(raw) }),
