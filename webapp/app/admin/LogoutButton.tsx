@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 
-export function LogoutButton() {
+export function LogoutButton({ light }: { light?: boolean } = {}) {
   const router = useRouter()
 
   async function handleLogout() {
@@ -14,7 +14,11 @@ export function LogoutButton() {
   return (
     <button
       onClick={handleLogout}
-      className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300"
+      className={
+        light
+          ? 'rounded-lg border border-[#E0DBD5] px-3 py-1.5 text-sm text-[#666]'
+          : 'rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300'
+      }
     >
       Выйти
     </button>

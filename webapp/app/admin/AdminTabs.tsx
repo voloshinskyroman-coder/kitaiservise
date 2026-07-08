@@ -5,6 +5,7 @@ import { LeadsTab } from './LeadsTab'
 import { FunnelTab, type FunnelRow } from './FunnelTab'
 import { OutreachDashboard } from './OutreachDashboard'
 import { CrmBoard } from './CrmBoard'
+import { LogoutButton } from './LogoutButton'
 import type { Shipment } from '@/lib/types/shipment'
 import type { OutreachData } from '@/lib/queries/outreach'
 import type { CrmCard } from '@/lib/queries/crm'
@@ -30,16 +31,30 @@ export function AdminTabs({
   crm: CrmCard[]
 }) {
   const [tab, setTab] = useState<Tab>('outreach')
+  // Раздел рассылки визуально повторяет Vellar Home (светлая кремовая тема) —
+  // остальные разделы админки остаются в тёмной теме KitaiService.
+  const isOutreach = tab === 'outreach'
 
   return (
-    <div>
+    <div className={isOutreach ? 'min-h-screen bg-[#F5F0EB] p-8 text-[#1A1A1A]' : 'min-h-screen bg-neutral-950 p-8 text-neutral-100'}>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Админ-панель KitaiService</h1>
+        <LogoutButton light={isOutreach} />
+      </div>
+
       <div className="mb-6 flex gap-2">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`rounded-xl px-4 py-2 text-sm transition-all ${
-              tab === t.key ? 'bg-neutral-100 text-neutral-900' : 'border border-neutral-800 text-neutral-400'
+              tab === t.key
+                ? isOutreach
+                  ? 'bg-[#1A1A1A] text-white'
+                  : 'bg-neutral-100 text-neutral-900'
+                : isOutreach
+                  ? 'border border-[#E0DBD5] text-[#666]'
+                  : 'border border-neutral-800 text-neutral-400'
             }`}
           >
             {t.label}

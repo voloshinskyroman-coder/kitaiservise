@@ -2,7 +2,6 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { loadOutreachData } from '@/lib/queries/outreach'
 import { loadCrmCards } from '@/lib/queries/crm'
 import { AdminTabs } from './AdminTabs'
-import { LogoutButton } from './LogoutButton'
 import type { Shipment } from '@/lib/types/shipment'
 import type { FunnelRow } from './FunnelTab'
 
@@ -23,14 +22,5 @@ export default async function AdminHomePage() {
     loadCrmCards(supabase),
   ])
 
-  return (
-    <div className="min-h-screen bg-neutral-950 p-8 text-neutral-100">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Админ-панель KitaiService</h1>
-        <LogoutButton />
-      </div>
-
-      <AdminTabs leads={leadsRes.data ?? []} funnel={funnelRes.data ?? []} outreach={outreach} crm={crm} />
-    </div>
-  )
+  return <AdminTabs leads={leadsRes.data ?? []} funnel={funnelRes.data ?? []} outreach={outreach} crm={crm} />
 }
