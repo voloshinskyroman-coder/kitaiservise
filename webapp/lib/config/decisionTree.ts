@@ -88,6 +88,13 @@ const READINESS_OPTIONS: QuestionOption[] = [
   { value: 'unknown', label: 'Пока неизвестно' },
 ]
 
+const DELIVERY_URGENCY_OPTIONS: QuestionOption[] = [
+  { value: '7-10', label: '7–10 дней' },
+  { value: '10-14', label: '10–14 дней' },
+  { value: '14-30', label: '14–30 дней' },
+  { value: '30-45', label: '30–45 дней' },
+]
+
 const DESTINATION_HUB_OPTIONS: QuestionOption[] = [
   { value: 'vladivostok', label: 'Владивосток (Дальний Восток)' },
   { value: 'moscow', label: 'Москва (Центральный регион)' },
@@ -466,6 +473,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: READINESS_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ cargo_readiness: raw as Shipment['cargo_readiness'] }),
+    next: () => 'ct1_delivery_urgency',
+  },
+  ct1_delivery_urgency: {
+    id: 'ct1_delivery_urgency',
+    prompt: 'Насколько срочно нужна доставка груза?',
+    type: 'choice',
+    options: DELIVERY_URGENCY_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ delivery_urgency: raw as Shipment['delivery_urgency'] }),
     next: (shipment) => (shipment.delivery_mode === 'white' ? 'ct1_documents_white' : 'ct1_documents_cargo'),
   },
   ct1_documents_white: {
@@ -566,6 +581,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: READINESS_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ cargo_readiness: raw as Shipment['cargo_readiness'] }),
+    next: () => 'ct2_delivery_urgency',
+  },
+  ct2_delivery_urgency: {
+    id: 'ct2_delivery_urgency',
+    prompt: 'Насколько срочно нужна доставка груза?',
+    type: 'choice',
+    options: DELIVERY_URGENCY_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ delivery_urgency: raw as Shipment['delivery_urgency'] }),
     next: (shipment) => (shipment.delivery_mode === 'white' ? 'ct2_documents_white' : 'ct2_documents_cargo'),
   },
   ct2_documents_white: {

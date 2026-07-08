@@ -13,6 +13,12 @@ export const READINESS_LABEL: Record<string, string> = {
   month: 'через месяц',
   unknown: 'пока неизвестно',
 }
+export const DELIVERY_URGENCY_LABEL: Record<string, string> = {
+  '7-10': '7–10 дней',
+  '10-14': '10–14 дней',
+  '14-30': '14–30 дней',
+  '30-45': '30–45 дней',
+}
 export const PRIOR_EXPERIENCE_LABEL: Record<string, string> = {
   white: 'возил белой доставкой',
   cargo: 'возил карго',

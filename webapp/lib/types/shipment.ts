@@ -5,6 +5,8 @@ export type ShipmentStatus = 'in_progress' | 'completed'
 export type LogistStatus = 'new' | 'contacted' | 'closed'
 export type Currency = 'CNY' | 'USD' | 'RUB'
 export type CargoReadiness = 'ready' | 'week' | 'month' | 'unknown'
+/** Насколько срочно нужна доставка (в днях в пути) — отдельно от готовности груза к отправке. */
+export type DeliveryUrgency = '7-10' | '10-14' | '14-30' | '30-45'
 /** Внутренний код сценария (не показывается клиенту) — определяет, по какой ветке квиза он идёт. */
 export type ClientType = 0 | 1 | 2 | 3
 export type PriorExperience = 'white' | 'cargo' | 'none'
@@ -84,6 +86,7 @@ export interface Shipment {
   needs_money_transfer: boolean | null
   needs_logistics_calc: boolean | null
   cargo_readiness: CargoReadiness | null
+  delivery_urgency: DeliveryUrgency | null
   certificates_note: string | null
   customs_contract_holder: ContractHolder | null
   logistics_method: string | null

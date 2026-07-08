@@ -14,6 +14,7 @@ import {
   DELIVERY_MODE_LABEL,
   TEMPERATURE_EMOJI,
   READINESS_LABEL,
+  DELIVERY_URGENCY_LABEL,
   PRIOR_EXPERIENCE_LABEL,
   CLIENT_TYPE_LABEL,
   PAYMENT_METHOD_LABEL,
@@ -28,6 +29,7 @@ export {
   DELIVERY_MODE_LABEL,
   TEMPERATURE_EMOJI,
   READINESS_LABEL,
+  DELIVERY_URGENCY_LABEL,
   PRIOR_EXPERIENCE_LABEL,
   CLIENT_TYPE_LABEL,
   PAYMENT_METHOD_LABEL,
@@ -80,6 +82,7 @@ export function buildLogistCardText(shipment: Shipment): string {
   if (shipment.purchase_budget != null) cargoLines.push(`<b>Бюджет на закупку:</b> ${shipment.purchase_budget.toLocaleString('ru-RU')} ₽`)
   if (shipment.urgency) cargoLines.push(`<b>Срочность:</b> ${URGENCY_LABEL[shipment.urgency]}`)
   if (shipment.cargo_readiness) cargoLines.push(`<b>Готовность груза:</b> ${READINESS_LABEL[shipment.cargo_readiness]}`)
+  if (shipment.delivery_urgency) cargoLines.push(`<b>Срочность доставки:</b> ${DELIVERY_URGENCY_LABEL[shipment.delivery_urgency]}`)
   if (cargoLines.length > 0) lines.push('📐 <b>Параметры груза</b>', ...cargoLines, '')
 
   const docsLines: string[] = []

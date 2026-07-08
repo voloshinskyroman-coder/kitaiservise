@@ -16,6 +16,7 @@ import {
   DELIVERY_MODE_LABEL,
   TEMPERATURE_EMOJI,
   READINESS_LABEL,
+  DELIVERY_URGENCY_LABEL,
   PRIOR_EXPERIENCE_LABEL,
   CLIENT_TYPE_LABEL,
   PAYMENT_METHOD_LABEL,
@@ -98,6 +99,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         <Field label="Бюджет на закупку" value={lead.purchase_budget != null ? `${lead.purchase_budget.toLocaleString('ru-RU')} ₽` : null} />
         <Field label="Срочность" value={lead.urgency ? URGENCY_LABEL[lead.urgency] : null} />
         <Field label="Готовность груза" value={lead.cargo_readiness ? READINESS_LABEL[lead.cargo_readiness] : null} />
+        <Field label="Срочность доставки" value={lead.delivery_urgency ? DELIVERY_URGENCY_LABEL[lead.delivery_urgency] : null} />
         <Field
           label="Документы"
           value={lead.documents.length ? labelsForValues(ALL_DOCUMENT_OPTIONS, lead.documents).join(', ') : null}
