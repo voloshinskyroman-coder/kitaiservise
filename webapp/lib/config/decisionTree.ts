@@ -112,10 +112,7 @@ export const DOCUMENTS_WHITE_OPTIONS: QuestionOption[] = [
 
 export const DOCUMENTS_CARGO_OPTIONS: QuestionOption[] = [
   { value: 'invoice', label: 'Инвойс (Invoice)' },
-  { value: 'product_photo', label: 'Фото товара' },
   { value: 'packing_list', label: 'Упаковочный лист (Packing List)' },
-  { value: 'none', label: 'Ничего нет' },
-  { value: 'unknown', label: 'Не знаю' },
 ]
 
 const CONTRACT_HOLDER_OPTIONS: QuestionOption[] = [
