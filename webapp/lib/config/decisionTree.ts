@@ -79,16 +79,7 @@ const CONTRACT_HOLDER_BY_PAYMENT_METHOD: Record<string, 'client' | 'us'> = {
 const DELIVERY_MODE_OPTIONS: QuestionOption[] = [
   { value: 'white', label: 'Официальная доставка с таможенным оформлением (белая доставка)' },
   { value: 'cargo', label: 'Упрощённая доставка (карго)' },
-  { value: 'unknown', label: 'Не знаю, помогите выбрать' },
 ]
-
-const DELIVERY_MODE_FORCED_OPTIONS: QuestionOption[] = [
-  { value: 'white', label: 'Белая доставка' },
-  { value: 'cargo', label: 'Карго' },
-]
-
-const MODE_EXPLAINER_PROMPT =
-  'Карго — быстрее и дешевле, но без полного таможенного оформления. Белая доставка — с документами и таможенным оформлением, дольше и дороже, зато полностью законно и с чеками. Что выберете?'
 
 const READINESS_OPTIONS: QuestionOption[] = [
   { value: 'ready', label: 'Уже готов' },
@@ -446,21 +437,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Какой вариант доставки нужен?',
     type: 'choice',
     options: DELIVERY_MODE_OPTIONS,
-    applyAnswer: (_shipment, raw) => (raw === 'unknown' ? {} : { delivery_mode: raw as DeliveryMode }),
-    next: (_shipment, raw) => (raw === 'unknown' ? 'ct1_mode_explainer' : 'ct1_cost'),
-  },
-  ct1_mode_explainer: {
-    id: 'ct1_mode_explainer',
-    prompt: MODE_EXPLAINER_PROMPT,
-    type: 'info',
-    applyAnswer: () => ({}),
-    next: () => 'ct1_delivery_mode_forced',
-  },
-  ct1_delivery_mode_forced: {
-    id: 'ct1_delivery_mode_forced',
-    prompt: 'Какая доставка нужна?',
-    type: 'choice',
-    options: DELIVERY_MODE_FORCED_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct1_cost',
   },
@@ -581,21 +557,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     prompt: 'Какой вариант доставки нужен?',
     type: 'choice',
     options: DELIVERY_MODE_OPTIONS,
-    applyAnswer: (_shipment, raw) => (raw === 'unknown' ? {} : { delivery_mode: raw as DeliveryMode }),
-    next: (_shipment, raw) => (raw === 'unknown' ? 'ct2_mode_explainer' : 'ct2_cost'),
-  },
-  ct2_mode_explainer: {
-    id: 'ct2_mode_explainer',
-    prompt: MODE_EXPLAINER_PROMPT,
-    type: 'info',
-    applyAnswer: () => ({}),
-    next: () => 'ct2_delivery_mode_forced',
-  },
-  ct2_delivery_mode_forced: {
-    id: 'ct2_delivery_mode_forced',
-    prompt: 'Какая доставка нужна?',
-    type: 'choice',
-    options: DELIVERY_MODE_FORCED_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct2_cost',
   },
