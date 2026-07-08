@@ -385,14 +385,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   ct1_has: {
     id: 'ct1_has',
     prompt: 'Что у вас есть?',
-    type: 'choice',
+    type: 'multi-choice',
     options: [
       { value: 'link', label: 'Ссылка на товар' },
       { value: 'invoice', label: 'Инвойс' },
       { value: 'factory_contact', label: 'Контакты фабрики' },
       { value: 'commercial_offer', label: 'Коммерческое предложение' },
     ],
-    applyAnswer: (_shipment, raw) => ({ product_reference_type: raw }),
+    applyAnswer: (_shipment, raw) => ({ product_reference_type: parseMultiChoice(raw).join(', ') || null }),
     next: () => 'ct1_product',
   },
   ct1_product: {
