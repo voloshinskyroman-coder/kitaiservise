@@ -410,6 +410,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: PAYMENT_METHOD_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ payment_method: raw }),
+    next: () => 'ct1_delivery_mode',
+  },
+  ct1_delivery_mode: {
+    id: 'ct1_delivery_mode',
+    prompt: 'Какой вариант доставки нужен?',
+    type: 'choice',
+    options: DELIVERY_MODE_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct1_origin',
   },
   ct1_origin: {
@@ -426,14 +434,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: DESTINATION_HUB_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ destination_city: DESTINATION_HUB_CITY[raw] ?? raw }),
-    next: () => 'ct1_delivery_mode',
-  },
-  ct1_delivery_mode: {
-    id: 'ct1_delivery_mode',
-    prompt: 'Какой вариант доставки нужен?',
-    type: 'choice',
-    options: DELIVERY_MODE_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct1_cost',
   },
   ct1_cost: {
@@ -510,6 +510,14 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     autocomplete: true,
     withAttachment: true,
     applyAnswer: (_shipment, raw) => applyProductAndAttachment(raw),
+    next: () => 'ct2_delivery_mode',
+  },
+  ct2_delivery_mode: {
+    id: 'ct2_delivery_mode',
+    prompt: 'Какой вариант доставки нужен?',
+    type: 'choice',
+    options: DELIVERY_MODE_OPTIONS,
+    applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct2_origin',
   },
   ct2_origin: {
@@ -526,14 +534,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: DESTINATION_HUB_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ destination_city: DESTINATION_HUB_CITY[raw] ?? raw }),
-    next: () => 'ct2_delivery_mode',
-  },
-  ct2_delivery_mode: {
-    id: 'ct2_delivery_mode',
-    prompt: 'Какой вариант доставки нужен?',
-    type: 'choice',
-    options: DELIVERY_MODE_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ delivery_mode: raw as DeliveryMode }),
     next: () => 'ct2_cost',
   },
   ct2_cost: {
@@ -584,7 +584,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     optional: true,
     options: DOCUMENTS_CARGO_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ documents: parseMultiChoice(raw) }),
-    next: () => 'ct2_logistics_method',
+    next: () => 'ct2_extra_services',
   },
   ct2_contract_holder: {
     id: 'ct2_contract_holder',
@@ -592,14 +592,6 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
     type: 'choice',
     options: CONTRACT_HOLDER_OPTIONS,
     applyAnswer: (_shipment, raw) => ({ customs_contract_holder: raw as Shipment['customs_contract_holder'] }),
-    next: () => 'ct2_logistics_method',
-  },
-  ct2_logistics_method: {
-    id: 'ct2_logistics_method',
-    prompt: 'Какой способ логистики интересен?',
-    type: 'choice',
-    options: LOGISTICS_METHOD_OPTIONS,
-    applyAnswer: (_shipment, raw) => ({ logistics_method: raw }),
     next: () => 'ct2_extra_services',
   },
   ct2_extra_services: {
