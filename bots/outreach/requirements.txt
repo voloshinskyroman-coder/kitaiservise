@@ -3,4 +3,5 @@ openpyxl
 qrcode
 pillow
 requests
+python-socks[asyncio]
 # anthropic  # опционально: только если задан ANTHROPIC_API_KEY (перефразирование шаблонов рассылки)
