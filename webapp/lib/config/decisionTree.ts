@@ -423,7 +423,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct1_origin: {
     id: 'ct1_origin',
-    prompt: 'Где находится товар/поставщик? (город, провинция или адрес склада/фабрики)',
+    prompt: 'В каком городе или провинции находится ваш товар?',
     type: 'text',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ origin_city: raw || null }),
@@ -565,7 +565,7 @@ export const DECISION_TREE: Record<string, QuestionNode> = {
   },
   ct2_origin: {
     id: 'ct2_origin',
-    prompt: 'Где находится товар? (город, провинция, склад/фабрика)',
+    prompt: 'В каком городе или провинции находится ваш товар?',
     type: 'text',
     optional: true,
     applyAnswer: (_shipment, raw) => ({ origin_city: raw || null }),
