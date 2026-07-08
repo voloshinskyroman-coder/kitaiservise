@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getStartQuestion, type SerializedQuestion } from '@/lib/engines/decisionEngine'
-import type { PublicShipment } from '@/lib/types/publicShipment'
 import type { QuestionOption } from '@/lib/config/decisionTree'
 
 // Опции с явным description (полноценное пояснение) показываем как заголовок + текст.
@@ -61,8 +60,6 @@ export default function QuizPage() {
   const [error, setError] = useState<string | null>(null)
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState<PublicShipment | null>(null)
-  const [confirmed, setConfirmed] = useState(false)
   const startedRef = useRef(false)
 
   async function startSession() {
@@ -180,7 +177,6 @@ export default function QuizPage() {
     setUploadError(null)
     setStep((s) => s + 1)
     setSubmitting(false)
-    if (!data.nextQuestion) setResult(data.shipment)
   }
 
   function goBack() {
@@ -460,49 +456,19 @@ export default function QuizPage() {
           )
         })()}
 
-        {isFinished && !confirmed && (
-          <div>
-            {result && result.estimated_price_min != null ? (
-              <div className="rounded-2xl bg-surface p-6 text-center">
-                <p className="text-sm text-muted">Ориентировочная стоимость</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight text-primary">
-                  {result.estimated_price_min.toLocaleString('ru-RU')}–{result.estimated_price_max?.toLocaleString('ru-RU')} ₽
-                </p>
-                {result.estimated_route && (
-                  <p className="mt-2 text-sm text-muted">
-                    {result.estimated_route} · {result.estimated_delivery_days_min}–{result.estimated_delivery_days_max} дней
-                  </p>
-                )}
-                <ul className="mt-5 space-y-2 text-left text-sm leading-relaxed text-muted">
-                  <li>• Доставка от склада в Китае до вашего города</li>
-                  <li>• Отслеживание груза на всём пути</li>
-                  <li>• Поддержка менеджера до получения груза</li>
-                </ul>
-              </div>
-            ) : (
-              <p className="text-center leading-relaxed text-muted">Спасибо! Наш менеджер свяжется с вами для консультации.</p>
-            )}
-
-            <button
-              onClick={() => setConfirmed(true)}
-              className="mt-5 flex min-h-[56px] w-full cursor-pointer items-center justify-center gap-3 rounded-2xl bg-cta px-4 text-base font-semibold text-white transition-colors duration-200 hover:bg-cta-hover"
-            >
-              Получить точный расчёт
-            </button>
-          </div>
-        )}
-
-        {isFinished && confirmed && (
-          <div className="flex flex-col items-center text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface text-primary">
+        {isFinished && (
+          <div className="flex flex-col items-center gap-5 rounded-2xl bg-surface p-8 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-primary">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-7 w-7" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
               </svg>
             </span>
-            <h1 className="mt-4 text-lg font-semibold">Заявка принята</h1>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              Это предварительный расчёт. Менеджер посмотрит заявку и свяжется с вами для окончательной стоимости.
-            </p>
+            <div>
+              <h1 className="text-lg font-semibold">Спасибо, анкета заполнена!</h1>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                Мы всё получили. Менеджер посчитает точную стоимость доставки и пришлёт расчёт вам в бот в ближайшее время.
+              </p>
+            </div>
           </div>
         )}
       </div>
