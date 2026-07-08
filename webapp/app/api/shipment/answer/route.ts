@@ -9,6 +9,7 @@ import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
 import { analyzeDocumentImage, analyzeDocumentText } from '@/lib/engines/documentAnalysis'
 import { getSignedAttachmentUrl } from '@/lib/engines/attachmentStorage'
 import { extractAttachmentText, TEXT_EXTRACTABLE_MIME_TYPES } from '@/lib/engines/attachmentText'
+import { extractPdfText } from '@/lib/engines/pdfText'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
 
@@ -73,19 +74,23 @@ export async function POST(req: NextRequest) {
 
   // AI-анализ товара (tn.md) — не блокирует ответ клиенту (сам запрос к LLM занимает секунды),
   // дозаполняется в фоне после отправки ответа: до вопросов про категорию/сертификацию ещё есть время.
-  // Вложение (инвойс/упаковочный лист) — тот же фон: xlsx/csv/txt разбираются в текст и идут и в
-  // классификацию товара, и в отдельный пересказ для логиста; фото — через vision. PDF и legacy .xls
-  // пока не разбираются AI (остаются только файлом в заявке), см. attachmentText.ts.
+  // Вложение (инвойс/упаковочный лист) — тот же фон: xlsx/csv/txt/PDF с текстовым слоем разбираются
+  // в текст и идут и в классификацию товара, и в отдельный пересказ для логиста; фото — через vision.
+  // Сканы/фото-PDF без текстового слоя и legacy .xls пока не разбираются AI (остаются только файлом).
   if (PRODUCT_QUESTION_IDS.has(questionId)) {
     const attachmentPath = recalculated.attachment_path
     const attachmentMimeType = recalculated.attachment_mime_type
     after(async () => {
       let attachmentText: string | null = null
-      if (attachmentPath && attachmentMimeType && TEXT_EXTRACTABLE_MIME_TYPES.has(attachmentMimeType)) {
+      if (attachmentPath && attachmentMimeType) {
         try {
-          attachmentText = await extractAttachmentText(attachmentPath, attachmentMimeType)
+          if (TEXT_EXTRACTABLE_MIME_TYPES.has(attachmentMimeType)) {
+            attachmentText = await extractAttachmentText(attachmentPath, attachmentMimeType)
+          } else if (attachmentMimeType === 'application/pdf') {
+            attachmentText = await extractPdfText(attachmentPath)
+          }
         } catch (err) {
-          console.error('[shipment/answer] extractAttachmentText failed', err)
+          console.error('[shipment/answer] extract attachment text failed', err)
         }
       }
 
