@@ -61,6 +61,8 @@ export async function analyzeProduct(input: {
   category: string | null
   description: string | null
   referenceValue: string | null
+  /** Текст, извлечённый из вложения (инвойс/упаковочный лист) — см. attachmentText.ts. Может быть на китайском. */
+  attachmentText?: string | null
   /** Заполняется при повторной попытке — например, если предыдущий код не нашёлся в официальном классификаторе. */
   retryNote?: string
 }): Promise<ProductAnalysisResult | null> {
@@ -74,6 +76,7 @@ export async function analyzeProduct(input: {
     input.category ? `Категория: ${input.category}` : null,
     input.description ? `Описание товара: ${input.description}` : null,
     input.referenceValue ? `Ссылка на товар: ${input.referenceValue}` : null,
+    input.attachmentText ? `Данные из вложения (инвойс/упаковочный лист, может быть на китайском):\n${input.attachmentText}` : null,
     input.retryNote ? `\n${input.retryNote}` : null,
   ].filter((p): p is string => Boolean(p))
 
@@ -154,6 +157,7 @@ export async function analyzeAndVerifyProduct(input: {
   category: string | null
   description: string | null
   referenceValue: string | null
+  attachmentText?: string | null
 }): Promise<VerifiedProductAnalysis | null> {
   const analysis = await analyzeProduct(input)
   if (!analysis) return null

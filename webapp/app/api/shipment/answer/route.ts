@@ -6,8 +6,9 @@ import { getQuestionNode, getNextQuestion } from '@/lib/engines/decisionEngine'
 import { getAccuracyHint } from '@/lib/engines/recommendationEngine'
 import { notifyLogist } from '@/lib/engines/logisticEngine'
 import { analyzeAndVerifyProduct } from '@/lib/engines/aiProductAnalysis'
-import { analyzeDocumentImage } from '@/lib/engines/documentAnalysis'
+import { analyzeDocumentImage, analyzeDocumentText } from '@/lib/engines/documentAnalysis'
 import { getSignedAttachmentUrl } from '@/lib/engines/attachmentStorage'
+import { extractAttachmentText, TEXT_EXTRACTABLE_MIME_TYPES } from '@/lib/engines/attachmentText'
 import { toPublicShipment } from '@/lib/types/publicShipment'
 import type { Shipment } from '@/lib/types/shipment'
 
@@ -72,48 +73,63 @@ export async function POST(req: NextRequest) {
 
   // AI-анализ товара (tn.md) — не блокирует ответ клиенту (сам запрос к LLM занимает секунды),
   // дозаполняется в фоне после отправки ответа: до вопросов про категорию/сертификацию ещё есть время.
+  // Вложение (инвойс/упаковочный лист) — тот же фон: xlsx/csv/txt разбираются в текст и идут и в
+  // классификацию товара, и в отдельный пересказ для логиста; фото — через vision. PDF и legacy .xls
+  // пока не разбираются AI (остаются только файлом в заявке), см. attachmentText.ts.
   if (PRODUCT_QUESTION_IDS.has(questionId)) {
+    const attachmentPath = recalculated.attachment_path
+    const attachmentMimeType = recalculated.attachment_mime_type
     after(async () => {
-      try {
-        const analysis = await analyzeAndVerifyProduct({
+      let attachmentText: string | null = null
+      if (attachmentPath && attachmentMimeType && TEXT_EXTRACTABLE_MIME_TYPES.has(attachmentMimeType)) {
+        try {
+          attachmentText = await extractAttachmentText(attachmentPath, attachmentMimeType)
+        } catch (err) {
+          console.error('[shipment/answer] extractAttachmentText failed', err)
+        }
+      }
+
+      const [analysis, attachmentSummary] = await Promise.all([
+        analyzeAndVerifyProduct({
           category: recalculated.category,
           description: recalculated.product_description,
           referenceValue: recalculated.product_reference_value,
-        })
-        if (analysis) {
-          await supabase
-            .from('shipments')
-            .update({
-              // category клиент больше не выбирает сам — если AI его не определил, не затираем null.
-              ...(analysis.category ? { category: analysis.category } : {}),
-              hs_code_suggested: analysis.hsCodeEntry ? analysis.hsCodeEntry.code : analysis.hsCode,
-              hs_code_suggested_description: analysis.hsCodeEntry?.description ?? null,
-              ai_confidence: analysis.confidence,
-              ai_suggested_documents: analysis.documents,
-              ai_suggested_non_tariff: analysis.nonTariffServices,
-            })
-            .eq('id', sessionId)
-        }
-      } catch (err) {
-        console.error('[shipment/answer] analyzeProduct background failed', err)
-      }
-    })
-  }
+          attachmentText,
+        }).catch((err) => {
+          console.error('[shipment/answer] analyzeProduct background failed', err)
+          return null
+        }),
+        (async () => {
+          if (!attachmentPath || !attachmentMimeType) return null
+          try {
+            if (attachmentMimeType.startsWith('image/')) {
+              const signedUrl = await getSignedAttachmentUrl(attachmentPath)
+              return signedUrl ? await analyzeDocumentImage(signedUrl) : null
+            }
+            return attachmentText ? await analyzeDocumentText(attachmentText) : null
+          } catch (err) {
+            console.error('[shipment/answer] attachment summary background failed', err)
+            return null
+          }
+        })(),
+      ])
 
-  // AI-пересказ вложения (инвойс/упаковочный лист) — только для изображений, PDF пока не
-  // конвертируем для vision-модели. Файл в бот логисту уходит позже, при notifyLogist.
-  if (PRODUCT_QUESTION_IDS.has(questionId) && recalculated.attachment_path && recalculated.attachment_mime_type?.startsWith('image/')) {
-    const attachmentPath = recalculated.attachment_path
-    after(async () => {
-      try {
-        const signedUrl = await getSignedAttachmentUrl(attachmentPath)
-        if (!signedUrl) return
-        const summary = await analyzeDocumentImage(signedUrl)
-        if (summary) {
-          await supabase.from('shipments').update({ attachment_ai_summary: summary }).eq('id', sessionId)
-        }
-      } catch (err) {
-        console.error('[shipment/answer] analyzeDocumentImage background failed', err)
+      const patch: Record<string, unknown> = {}
+      if (analysis) {
+        Object.assign(patch, {
+          // category клиент больше не выбирает сам — если AI его не определил, не затираем null.
+          ...(analysis.category ? { category: analysis.category } : {}),
+          hs_code_suggested: analysis.hsCodeEntry ? analysis.hsCodeEntry.code : analysis.hsCode,
+          hs_code_suggested_description: analysis.hsCodeEntry?.description ?? null,
+          ai_confidence: analysis.confidence,
+          ai_suggested_documents: analysis.documents,
+          ai_suggested_non_tariff: analysis.nonTariffServices,
+        })
+      }
+      if (attachmentSummary) patch.attachment_ai_summary = attachmentSummary
+
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('shipments').update(patch).eq('id', sessionId)
       }
     })
   }

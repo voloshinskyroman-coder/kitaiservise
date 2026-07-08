@@ -1,11 +1,12 @@
 import 'server-only'
 
-/**
- * AI-анализ вложения (инвойс/упаковочный лист) — свободный текстовый пересказ для логиста,
- * не структурированные поля (форматы документов слишком разные для жёсткой схемы на MVP).
- * Только изображения — PDF пока не конвертируем в картинку для vision-модели.
- */
-export async function analyzeDocumentImage(imageUrl: string): Promise<string | null> {
+const SYSTEM_PROMPT =
+  'Ты помогаешь логисту быстро понять содержимое присланного документа (инвойс, упаковочный лист) для доставки груза из Китая. Документ может быть на китайском или английском — переведи и перескажи по-русски.'
+
+const INSTRUCTION =
+  'Опиши коротко (3-5 строк): товар, количество, стоимость, поставщик — если видно в документе. Если это не похоже на инвойс/упаковочный лист или данные не читаются, так и скажи.'
+
+async function summarize(messages: unknown[]): Promise<string | null> {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) {
     console.warn('[documentAnalysis] OPENROUTER_API_KEY не задан — анализ пропущен')
@@ -22,23 +23,7 @@ export async function analyzeDocumentImage(imageUrl: string): Promise<string | n
       signal: controller.signal,
       body: JSON.stringify({
         model: 'openai/gpt-5',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Ты помогаешь логисту быстро понять содержимое присланного документа (инвойс, упаковочный лист) для доставки груза из Китая.',
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'Опиши коротко (3-5 строк): товар, количество, стоимость, поставщик — если видно на документе. Если текст не читается или это не инвойс/упаковочный лист, так и скажи.',
-              },
-              { type: 'image_url', image_url: { url: imageUrl } },
-            ],
-          },
-        ],
+        messages,
         reasoning: { effort: 'low' },
       }),
     })
@@ -58,4 +43,29 @@ export async function analyzeDocumentImage(imageUrl: string): Promise<string | n
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/**
+ * AI-анализ вложения-изображения (инвойс/упаковочный лист) — свободный текстовый пересказ
+ * для логиста, не структурированные поля (форматы документов слишком разные для жёсткой схемы на MVP).
+ */
+export async function analyzeDocumentImage(imageUrl: string): Promise<string | null> {
+  return summarize([
+    { role: 'system', content: SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: INSTRUCTION },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ],
+    },
+  ])
+}
+
+/** Тот же пересказ, но для вложений с извлекаемым текстом (xlsx/csv/txt, см. attachmentText.ts). */
+export async function analyzeDocumentText(text: string): Promise<string | null> {
+  return summarize([
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: `Содержимое файла:\n\n${text}\n\n${INSTRUCTION}` },
+  ])
 }
