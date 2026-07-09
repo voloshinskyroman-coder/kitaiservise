@@ -78,7 +78,7 @@ MSK = timezone(timedelta(hours=3))
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.FileHandler(str(_LOG_FILE)),
     ]
@@ -872,6 +872,47 @@ async def task_upgrade_accounts():
             upgraded.append(f"{session} (возраст {age_days} дн.)")
             log.info(f"[upgrade] {session}: daily_limit 0 → 3 (возраст {age_days} дн.)")
 
+    # Автовключение sender=true — иначе после ручного онбординга партии аккаунтов
+    # легко забыть перевести их из "только прогрев" в реальную рассылку.
+    sender_enabled = []
+    for acc in accs:
+        if acc.get("sender"):
+            continue
+        session = acc["session"]
+        if _GROUP is not None and _stable_group(session) != _GROUP:
+            continue
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=20)
+            row = conn.execute(
+                "SELECT status, created_at, flood_count FROM accounts WHERE session=?", (session,)
+            ).fetchone()
+            conn.close()
+        except Exception:
+            continue
+        if not row:
+            continue
+        status, created_at, flood_count = row
+        if status in ("dead", "auth_error", "paused"):
+            continue  # мёртвых и тех, кто сейчас реально в паузе после флуда — не трогаем
+        # История флуда сама по себе не блокирует: тир (yellow/red) уже ограничивает
+        # лимит и включает can_send, пока пауза не закончится — отдельная ручная
+        # проверка тут больше не нужна.
+        try:
+            ca = datetime.fromisoformat(str(created_at))
+            if ca.tzinfo is None:
+                ca = ca.replace(tzinfo=timezone.utc)
+            age_days = (now.date() - ca.date()).days
+        except Exception:
+            continue
+        if age_days >= 3:
+            acc["sender"] = True
+            accs_map[session] = acc
+            sender_enabled.append(f"{session} (возраст {age_days} дн., без флуда)")
+            log.info(f"[upgrade] {session}: sender false → true (возраст {age_days} дн.)")
+
+    if sender_enabled:
+        upgraded.extend(sender_enabled)
+
     if upgraded:
         accounts_file.write_text(json.dumps(accs, ensure_ascii=False, indent=2))
         tg_alert("🆙 <b>Автоапгрейд аккаунтов:</b>\n" + "\n".join(f"• {u}" for u in upgraded))
@@ -1233,8 +1274,20 @@ async def _task_sender_inner():
         if not can_send:
             log.info(f"[{me.first_name}] тир '{tier}' — рассылка отключена")
             return
-        delay_min = d_min if d_min is not None else DELAY_MIN
-        delay_max = d_max if d_max is not None else DELAY_MAX
+        # Пауза между сообщениями одного аккаунта — по тиру, "примерно" (±20%
+        # джиттер), не фикс. Постепенное ускорение по мере роста доверия к
+        # аккаунту; yellow (после флуда) — отдельно, медленнее blue, это про
+        # восстановление после инцидента, а не про возраст.
+        _PACE_MINUTES = {
+            'blue':   60,
+            'green':  45,
+            'orange': 30,
+            'purple': 20,
+            'yellow': 90,
+        }
+        _pace = _PACE_MINUTES.get(tier, 30) * 60
+        delay_min = round(_pace * 0.8)
+        delay_max = round(_pace * 1.2)
 
         acc_daily = compute_daily_limit(session, tier)
         account_id = upsert_account(session, acc_daily, HOURLY_LIMIT)
@@ -1271,11 +1324,15 @@ async def _task_sender_inner():
         except Exception:
             log.info(f"[{me.first_name}] контактов: {len(contacts)}, отправлено: {sent_today(account_id)}/{acc_daily}")
 
+        if not contacts:
+            log.info(f"[{me.first_name}] нет доступных контактов для рассылки")
         conn_check = sqlite3.connect(DB_PATH, timeout=25)
         for contact in contacts:
             if not (SEND_HOUR_START <= now_msk().hour < SEND_HOUR_END):
+                log.info(f"[{me.first_name}] вне рабочих часов ({SEND_HOUR_START}-{SEND_HOUR_END}) — стоп")
                 break
             if sent_today(account_id) >= acc_daily:
+                log.info(f"[{me.first_name}] дневной лимит {acc_daily} исчерпан — стоп")
                 break
             if sent_this_hour(account_id) >= HOURLY_LIMIT:
                 log.info(f"[{me.first_name}] часовой лимит, жду 15 мин")
@@ -1311,6 +1368,7 @@ async def _task_sender_inner():
             message_text = build_message(_varied, me.first_name or "", gender)
 
             # ── Имитация живого поведения перед отправкой ─────────────────
+            _target_entity = None
             try:
                 _read_done = False
 
@@ -1371,12 +1429,14 @@ async def _task_sender_inner():
                 _pause_time = sum(random.uniform(1.0, 3.5) for _ in range(_pauses))
                 _type_delay = _base_typing + _pause_time
                 await asyncio.sleep(min(_type_delay, 35))
-            except Exception:
-                pass
+            except Exception as _e:
+                log.warning(f"[{me.first_name}] шаг имитации набора для {target} пропущен: {type(_e).__name__}: {_e}")
             # ──────────────────────────────────────────────────────────────
 
             try:
-                msg = await client.send_message(target, message_text)
+                # Переиспользуем уже резолвленную сущность из шага имитации набора —
+                # избегаем второго резолва того же юзернейма.
+                msg = await client.send_message(_target_entity or target, message_text)
             except FloodWaitError as e:
                 log.warning(f"[{me.first_name}] FloodWait {e.seconds}с")
                 # Откатываем claimed контакт обратно в new
@@ -1442,6 +1502,37 @@ async def _task_sender_inner():
                 elif "PrivacyPremiumRequired" in err_name or "PRIVACY_PREMIUM_REQUIRED" in err_str:
                     mark_contact(cid, "skipped")
                     log.info(f"[{me.first_name}] ⏭️  {target} — только Premium")
+                elif err_name == "ValueError" and "No user has" in err_str and uname:
+                    # Это не баг Telethon — ValueError тут лишь пересказывает ответ сервера
+                    # (UsernameNotOccupiedError), т.е. сам Telegram в моменте сказал "не найден"
+                    # для реального юзернейма. Мгновенный повтор с высокой вероятностью
+                    # упрётся в то же самое — ждём немного и пробуем через сырой API-запрос.
+                    await asyncio.sleep(random.uniform(120, 180))
+                    try:
+                        from telethon.tl.functions.contacts import ResolveUsernameRequest
+                        _resolved = await client(ResolveUsernameRequest(uname))
+                        _peer_user = _resolved.users[0] if _resolved.users else None
+                        if _peer_user:
+                            msg = await client.send_message(_peer_user, message_text)
+                            for _db_attempt in range(3):
+                                try:
+                                    add_message(cid, account_id, "out", message_text, msg.id, _tpl_name)
+                                    mark_contact(cid, "sent", account_id)
+                                    log.info(f"[{me.first_name}] ✅ {target} (после ручного resolve)")
+                                    break
+                                except Exception:
+                                    await asyncio.sleep(1)
+                            await asyncio.sleep(random.uniform(delay_min, delay_max))
+                            continue
+                        else:
+                            raise ValueError("resolve вернул пустой список users")
+                    except Exception as _re:
+                        try:
+                            conn_check.execute("UPDATE contacts SET status='new' WHERE id=? AND status='sending'", (cid,))
+                            conn_check.commit()
+                        except Exception:
+                            pass
+                        log.warning(f"[{me.first_name}] ⚠️  {target}: ручной resolve тоже не помог: {_re} (контакт в new, попробуем снова)")
                 else:
                     # Сетевая/DB ошибка — откатываем sending → new, попробуем снова
                     try:
@@ -1449,7 +1540,8 @@ async def _task_sender_inner():
                         conn_check.commit()
                     except Exception:
                         pass
-                    log.warning(f"[{me.first_name}] ⚠️  {target}: {e} (контакт в new, попробуем снова)")
+                    _proxy_host = acc["proxy"][1] if acc.get("proxy") else None
+                    log.warning(f"[{me.first_name}] ⚠️  {target}: [{err_name}] {e} | прокси={_proxy_host} (контакт в new, попробуем снова)")
                 await asyncio.sleep(random.uniform(delay_min, delay_max))
                 continue
 
@@ -1482,22 +1574,16 @@ def _build_daily_schedule(date_str: str) -> list:
     """Каждый день — новое расписание с ±15 мин джиттером.
     Seeded от даты → одинаково на весь день, но разное каждый следующий день."""
     rng = random.Random(int(date_str.replace("-", "")))
-    return [
+    schedule = [
         # утренний прогрев: 08:45 – 09:15
         (8 + (rng.randint(45, 59) >= 60), rng.randint(45, 59) % 60,
          ["warmup_morning", "upgrade_accounts"]),
         # первая переписка: 10:30 – 11:15
         (10, rng.randint(30, 59), ["inter_chat"]),
-        # первая рассылка: 11:00 – 11:30
-        (11, rng.randint(0, 30),  ["sender"]),
         # дневной прогрев: 13:45 – 14:15
         (13, rng.randint(45, 59), ["warmup_afternoon"]),
         # вторая переписка: 14:00 – 14:45
         (14, rng.randint(5, 45),  ["inter_chat"]),
-        # вторая рассылка: 15:00 – 15:45
-        (15, rng.randint(0, 45),  ["sender"]),
-        # третья рассылка: 17:15 – 18:00
-        (17, rng.randint(15, 59), ["sender"]),
         # третья переписка: 18:15 – 19:00
         (18, rng.randint(15, 59), ["inter_chat"]),
         # вечерний прогрев: 19:00 – 19:20
@@ -1505,6 +1591,19 @@ def _build_daily_schedule(date_str: str) -> list:
         # четвёртая переписка: 20:30 – 21:00
         (20, rng.randint(30, 59), ["inter_chat"]),
     ]
+    # Рассылка — каждые ~30 минут в рабочем окне (SEND_HOUR_START-SEND_HOUR_END),
+    # а не редкие отдельные слоты. Лимиты/паузы по тиру и так ограничивают объём —
+    # чаще перезапускать безопасно, зато застрявшие (часовой лимит, ошибка резолва
+    # и т.п.) аккаунты получают шанс попробовать снова гораздо быстрее.
+    minute = rng.randint(0, 10)
+    hour = SEND_HOUR_START
+    while hour < SEND_HOUR_END:
+        schedule.append((hour, minute, ["sender"]))
+        minute += 30
+        if minute >= 60:
+            minute -= 60
+            hour += 1
+    return schedule
 
 
 def _launch_task(task: str):
