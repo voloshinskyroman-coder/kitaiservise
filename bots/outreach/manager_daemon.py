@@ -1171,7 +1171,7 @@ def build_message(template, first_name, gender):
     uvidel = "Увидела" if gender == "female" else "Увидел"
     reshil = "решила"  if gender == "female" else "решил"
     hour = now_msk().hour
-    privet = "Добрый вечер" if hour >= 18 else "Добрый день"
+    privet = "Доброе утро" if hour < 12 else "Добрый вечер" if hour >= 18 else "Добрый день"
     return (template
         .replace("{ИМЯ_АККАУНТА}", first_name)
         .replace("{УВИДЕЛ}", uvidel)
