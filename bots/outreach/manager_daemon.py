@@ -1983,7 +1983,7 @@ async def main():
                     row = _c.execute(
                         "SELECT status FROM accounts WHERE session=?", (acc["session"],)
                     ).fetchone()
-                    if row and row["status"] not in ("dead", "auth_error"):
+                    if (not row) or row["status"] not in ("dead", "auth_error"):
                         to_reconnect.append(acc)
                 _c.close()
             except Exception as _e:
