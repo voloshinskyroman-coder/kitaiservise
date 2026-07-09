@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from datetime import datetime, timezone, timedelta
 from urllib import request as urllib_request
 
@@ -10,10 +11,25 @@ LLM_MODEL    = os.environ.get("LLM_MODEL", "openai/gpt-4o-mini")
 MINI_APP_URL = os.environ.get("MINI_APP_URL", "https://t.me/kitaiservice_bot/app")
 MANAGER_GENDER = os.environ.get("MANAGER_GENDER", "female")  # female | male
 
-MINI_APP_LINK = (
-    f"Отлично! Для вас сделали мини-приложение, там за 30 секунд можно получить точный расчёт стоимости и сроков доставки из Китая:\n{MINI_APP_URL}\n\n"
-    f"После вернусь с комментариями по вашей заявке"
-)
+MINI_APP_LINK_VARIANTS = [
+    (
+        "Отлично!\n\n"
+        "Чтобы подготовить расчет, мы сделали небольшой квиз. Он займет около 3 минут.\n\n"
+        "По вашим ответам бот рассчитает предварительную стоимость доставки и подберет оптимальный вариант.\n\n"
+        f"👉 {MINI_APP_URL}"
+    ),
+    (
+        "Отлично!\n\n"
+        "Для расчета стоимости доставки нужно ответить всего на несколько вопросов. Мы собрали их в удобном боте, поэтому заполнение займет около 3 минут.\n\n"
+        "После этого вы получите предварительный расчет стоимости доставки.\n\n"
+        f"👉 {MINI_APP_URL}"
+    ),
+]
+
+NOT_INTERESTED_VARIANTS = [
+    "Хорошо, спасибо за ответ.\n\nЕсли в будущем понадобится расчет доставки или таможенное оформление, обращайтесь. Будем рады помочь.",
+    "Спасибо за ответ.\n\nЕсли вопрос доставки из Китая станет актуален, обращайтесь.",
+]
 
 MSK = timezone(timedelta(hours=3))
 
@@ -33,6 +49,8 @@ def _build_system_prompt(manager_name: str = "") -> str:
     tod = _time_of_day()
     today_msk = datetime.now(MSK).strftime("%Y-%m-%d")
     today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mini_app_link = random.choice(MINI_APP_LINK_VARIANTS)
+    not_interested = random.choice(NOT_INTERESTED_VARIANTS)
     if MANAGER_GENDER == "male":
         gender_rules = (
             'Ты мужчина. ОБЯЗАТЕЛЬНО пиши только от мужского рода.\n'
@@ -60,10 +78,13 @@ def _build_system_prompt(manager_name: str = "") -> str:
 
 Если человек проявляет интерес к доставке из Китая — твой ответ должен быть:
 
-"{MINI_APP_LINK}"
+"{mini_app_link}"
 
-Если человек задаёт уточняющие вопросы — кратко ответь и предложи ссылку.
-Если человек не интересуется — вежливо попрощайся, не настаивай.
+Если человек задаёт уточняющие вопросы — кратко ответь и предложи ссылку на квиз.
+Если человек не интересуется — твой ответ должен быть:
+
+"{not_interested}"
+
 Если непонятно — задай 1 вопрос: актуален ли вопрос доставки/выкупа из Китая.
 
 Правила:
