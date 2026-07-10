@@ -94,11 +94,14 @@ def supabase_req(method, path, data=None, params=""):
     except urllib.error.HTTPError as e:
         return e.code, e.read()
 
-def upsert(table, rows):
+def upsert(table, rows, on_conflict=None):
     if not rows:
         return
+    params = f"?on_conflict={on_conflict}" if on_conflict else ""
     for i in range(0, len(rows), 200):
-        supabase_req("POST", f"/rest/v1/{table}", rows[i:i+200])
+        status, body = supabase_req("POST", f"/rest/v1/{table}", rows[i:i+200], params)
+        if status >= 300:
+            print(f"[sync] upsert {table} failed ({status}): {body[:300]}")
 
 def upload_avatar(path: Path, filename: str) -> str:
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{filename}"
@@ -270,14 +273,13 @@ def run():
     try:
         for r in conn.execute("SELECT * FROM activity_log WHERE date(done_at) >= date('now','-7 days')").fetchall():
             act_rows.append({
-                "id":        r["id"],
                 "session":   r["session"],
                 "type":      r["type"],
                 "detail":    r["detail"],
                 "done_at":   r["done_at"],
                 "synced_at": now_iso,
             })
-        upsert("outreach_activity", act_rows)
+        upsert("outreach_activity", act_rows, on_conflict="session,type,done_at")
         print(f"[sync] activity: {len(act_rows)}")
     except Exception as e:
         print(f"[sync] activity error: {e}")
