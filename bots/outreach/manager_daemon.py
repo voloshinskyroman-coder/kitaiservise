@@ -863,7 +863,7 @@ async def task_upgrade_accounts():
             ca = datetime.fromisoformat(str(created_at))
             if ca.tzinfo is None:
                 ca = ca.replace(tzinfo=timezone.utc)
-            age_days = (now.date() - ca.date()).days
+            age_days = (now.date() - ca.date()).days + 1
         except Exception:
             continue
         if age_days >= 3:
@@ -901,7 +901,7 @@ async def task_upgrade_accounts():
             ca = datetime.fromisoformat(str(created_at))
             if ca.tzinfo is None:
                 ca = ca.replace(tzinfo=timezone.utc)
-            age_days = (now.date() - ca.date()).days
+            age_days = (now.date() - ca.date()).days + 1
         except Exception:
             continue
         if age_days >= 3:
