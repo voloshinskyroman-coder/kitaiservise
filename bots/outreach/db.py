@@ -89,6 +89,13 @@ def init_db():
         assigned_to TEXT,
         active      INTEGER DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS pending_operator_sends (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        conv_id    INTEGER NOT NULL REFERENCES conversations(id),
+        status     TEXT    DEFAULT 'pending',
+        created_at TEXT    DEFAULT (datetime('now'))
+    );
     """)
     # Миграции для существующих баз (добавляем колонку если нет)
     for _stmt in (
