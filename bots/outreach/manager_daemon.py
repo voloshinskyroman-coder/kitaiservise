@@ -364,8 +364,8 @@ async def poll_operator():
     """Опрашивает operator-бота и обрабатывает команды send/edit/skip."""
     try:
         from operator_bot import bot_api, get_updates, answer_cb, remove_buttons, notify_sent
-        operator_id = int(os.environ.get("OPERATOR_USER_ID", "0"))
-        if not operator_id:
+        operator_ids = [int(x) for x in os.environ.get("OPERATOR_USER_ID", "").split(",") if x.strip()]
+        if not operator_ids:
             log.warning("[operator] OPERATOR_USER_ID не задан — poll отключён")
             return
     except Exception as e:
@@ -373,19 +373,20 @@ async def poll_operator():
         return
 
     update_offset = 0
-    log.info(f"[operator] poll запущен (operator_id={operator_id})")
+    log.info(f"[operator] poll запущен (operator_ids={operator_ids})")
     while running:
         try:
             updates = await asyncio.to_thread(get_updates, update_offset)
             for upd in updates:
                 update_offset = upd["update_id"] + 1
                 msg = upd.get("message")
-                if msg and str(msg.get("from", {}).get("id")) == str(operator_id):
+                if msg and msg.get("from", {}).get("id") in operator_ids:
+                    sender_chat_id = msg["chat"]["id"]
                     text = msg.get("text", "").strip()
                     if text in ("/cancel", "/отмена"):
                         edit_waiting.clear()
                         await asyncio.to_thread(bot_api, "sendMessage",
-                                                {"chat_id": operator_id, "text": "❌ Редактирование отменено"})
+                                                {"chat_id": sender_chat_id, "text": "❌ Редактирование отменено"})
                         continue
                     if text.startswith("/"):
                         continue
@@ -407,7 +408,7 @@ async def poll_operator():
                             log.warning(f"[operator] update draft: {_e}")
                         del edit_waiting[conv_id]
                         await asyncio.to_thread(bot_api, "sendMessage", {
-                            "chat_id": operator_id,
+                            "chat_id": sender_chat_id,
                             "text": f"✅ Обновлено. Отправить?\n\n{text}",
                             "reply_markup": {"inline_keyboard": [[
                                 {"text": "✅ Отправить",  "callback_data": f"send:{conv_id}"},
@@ -417,11 +418,12 @@ async def poll_operator():
                         break
 
                 cb = upd.get("callback_query")
-                if not cb:
+                if not cb or cb.get("from", {}).get("id") not in operator_ids:
                     continue
-                data   = cb.get("data", "")
-                cb_id  = cb["id"]
-                msg_id = cb.get("message", {}).get("message_id", 0)
+                data       = cb.get("data", "")
+                cb_id      = cb["id"]
+                msg_id     = cb.get("message", {}).get("message_id", 0)
+                cb_chat_id = cb.get("message", {}).get("chat", {}).get("id", 0)
 
                 if data.startswith("send:"):
                     conv_id  = int(data[len("send:"):])
@@ -463,7 +465,7 @@ async def poll_operator():
                                 await asyncio.sleep(0.3)
                         _db_close_conversation(conv_id)
                         await asyncio.to_thread(answer_cb, cb_id, "✅ Отправлено")
-                        await asyncio.to_thread(remove_buttons, msg_id)
+                        await asyncio.to_thread(remove_buttons, msg_id, cb_chat_id)
                         if contact:
                             await asyncio.to_thread(notify_sent, contact.get("username"), contact["tg_id"], draft)
                     except Exception as e:
@@ -483,14 +485,14 @@ async def poll_operator():
                             pass
                     _db_close_conversation(conv_id)
                     await asyncio.to_thread(answer_cb, cb_id, "⛔ В блэклист")
-                    await asyncio.to_thread(remove_buttons, msg_id)
+                    await asyncio.to_thread(remove_buttons, msg_id, cb_chat_id)
 
                 elif data.startswith("edit:"):
                     conv_id = int(data[len("edit:"):])
                     edit_waiting[conv_id] = {"at": datetime.now().isoformat(), "msg_id": msg_id}
                     await asyncio.to_thread(answer_cb, cb_id, "Напиши новый вариант ответа")
                     await asyncio.to_thread(bot_api, "sendMessage", {
-                        "chat_id": operator_id,
+                        "chat_id": cb_chat_id,
                         "text": "✏️ Напиши новый вариант ответа:",
                     })
         except Exception as e:
@@ -1176,33 +1178,45 @@ async def _task_inter_chat_inner():
     log.info("=== Переписка завершена ===")
 
 # ── Рассылка ──────────────────────────────────────────────────────────────────
-async def generate_variation(template: str) -> str:
-    """Генерирует лёгкую вариацию шаблона через Claude Haiku. Fallback — оригинал."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+def _generate_variation_sync(template: str) -> str:
+    api_key = os.environ.get("LLM_API_KEY")
     if not api_key:
         return template
+    base_url = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    model = os.environ.get("VARIATION_LLM_MODEL", "openai/gpt-4o")
+    import urllib.request
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": 500,
+        "messages": [{
+            "role": "user",
+            "content": (
+                "Слегка перефразируй это Telegram-сообщение от менеджера по доставке товаров из Китая. "
+                "Правила:\n"
+                "- Все слова в {фигурных_скобках} оставь без изменений\n"
+                "- Сохрани структуру: три абзаца с пустыми строками между ними\n"
+                "- Пиши как живой человек в Telegram, разговорно и коротко\n"
+                "- Запрещено: тире (—), дефисы как разделители, слова 'данный момент', 'реализуем', 'оперативно', 'визит', 'пространство'\n"
+                "- Не делай текст длиннее оригинала\n"
+                "Отвечай только переформулированным текстом, без пояснений.\n\n"
+                f"{template}"
+            )
+        }]
+    }).encode()
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
+
+
+async def generate_variation(template: str) -> str:
+    """Генерирует лёгкую вариацию шаблона через OpenRouter. Fallback — оригинал."""
     try:
-        import anthropic as _anth
-        _ai = _anth.AsyncAnthropic(api_key=api_key)
-        resp = await _ai.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=500,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Слегка перефразируй это Telegram-сообщение от менеджера по доставке товаров из Китая. "
-                    "Правила:\n"
-                    "- Все слова в {фигурных_скобках} оставь без изменений\n"
-                    "- Сохрани структуру: три абзаца с пустыми строками между ними\n"
-                    "- Пиши как живой человек в Telegram, разговорно и коротко\n"
-                    "- Запрещено: тире (—), дефисы как разделители, слова 'данный момент', 'реализуем', 'оперативно', 'визит', 'пространство'\n"
-                    "- Не делай текст длиннее оригинала\n"
-                    "Отвечай только переформулированным текстом, без пояснений.\n\n"
-                    f"{template}"
-                )
-            }]
-        )
-        return resp.content[0].text.strip()
+        return await asyncio.to_thread(_generate_variation_sync, template)
     except Exception as _e:
         log.debug(f"[variation] fallback на оригинал: {_e}")
         return template
