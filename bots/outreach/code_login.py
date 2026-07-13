@@ -49,8 +49,10 @@ async def code_login(session_name: str, code_file: str):
 
     tmp_path = str(TMP_DIR / session_name)
     device = _assign_device(session_name)
+    proxy_arg = tuple(acc['proxy']) if acc.get('proxy') else None
     client = TelegramClient(
         tmp_path, acc['api_id'], acc['api_hash'],
+        proxy=proxy_arg,
         device_model=device['device_model'],
         system_version=device['system_version'],
         app_version=device['app_version'],
