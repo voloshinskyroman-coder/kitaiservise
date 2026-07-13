@@ -1720,6 +1720,14 @@ async def keepalive():
                 # Немедленно — без retry
                 clients.pop(session, None)
                 bad_auth_sessions.add(session)
+                # Без disconnect() внутренние таски Telethon (_keepalive_loop и
+                # автореконнект) продолжают жить и долбить в мёртвый ключ бесконечно,
+                # хотя аккаунт уже убран из нашего clients — это и давало десятки
+                # повторных "AuthKeyDuplicatedError" в логе после одного реального события.
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
                 try:
                     _c = sqlite3.connect(DB_PATH, timeout=20)
                     _c.execute("UPDATE accounts SET status='auth_error' WHERE session=?", (session,))
