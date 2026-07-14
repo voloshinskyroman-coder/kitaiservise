@@ -459,6 +459,12 @@ async def poll_operator():
                     if not conv:
                         await asyncio.to_thread(answer_cb, cb_id, "Не найдено")
                         continue
+                    if conv.get("status") == "closed":
+                        # Диалог уже закрыт (отправлен раньше) — старая кнопка
+                        # на карточке, которую не убрали вовремя. Не шлём повторно.
+                        await asyncio.to_thread(answer_cb, cb_id, "Уже отправлено ранее")
+                        await asyncio.to_thread(remove_buttons, msg_id, cb_chat_id)
+                        continue
                     contact  = _db_get_contact(conv["contact_id"])
                     draft    = conv.get("ai_draft", "")
                     acc_cl   = acc_clients.get(conv["account_id"])
