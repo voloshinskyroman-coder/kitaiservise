@@ -317,6 +317,20 @@ async def handle_incoming(client: TelegramClient, account_id: int, me, event):
         text = event.message.text or ""
         if not text:
             return
+        # Идемпотентность: Telethon после реконнекта иногда повторно доставляет
+        # уже обработанное сообщение через механизм catch-up (difference) —
+        # без этой проверки оно уходит как новый ответ клиента второй раз.
+        try:
+            _dc = sqlite3.connect(DB_PATH, timeout=20)
+            _dup = _dc.execute(
+                "SELECT 1 FROM messages WHERE contact_id=? AND direction='in' AND tg_msg_id=?",
+                (contact["id"], event.message.id)
+            ).fetchone()
+            _dc.close()
+            if _dup:
+                return
+        except Exception:
+            pass
         username = getattr(sender, "username", None)
         manager_name  = getattr(me, "first_name", None) if me else None
         manager_phone = getattr(me, "phone", None) if me else None
