@@ -452,13 +452,23 @@ async def poll_operator():
                         # Аккаунт в другой группе — ставим в очередь
                         try:
                             _qc = sqlite3.connect(DB_PATH, timeout=20)
-                            _qc.execute(
-                                "INSERT INTO pending_operator_sends (conv_id) VALUES (?)",
+                            _qc.row_factory = sqlite3.Row
+                            # Не ставим второй раз в очередь тот же диалог — иначе повторное
+                            # нажатие "Отправить" (кнопки не убирались до этого фикса) уходило
+                            # клиенту дублем через poll_pending_sends().
+                            _already = _qc.execute(
+                                "SELECT 1 FROM pending_operator_sends WHERE conv_id=? AND status='pending'",
                                 (conv_id,)
-                            )
-                            _qc.commit()
+                            ).fetchone()
+                            if not _already:
+                                _qc.execute(
+                                    "INSERT INTO pending_operator_sends (conv_id) VALUES (?)",
+                                    (conv_id,)
+                                )
+                                _qc.commit()
                             _qc.close()
                             await asyncio.to_thread(answer_cb, cb_id, "⏳ Отправляем...")
+                            await asyncio.to_thread(remove_buttons, msg_id, cb_chat_id)
                         except Exception as _qe:
                             await asyncio.to_thread(answer_cb, cb_id, f"Ошибка очереди: {_qe}")
                         continue
@@ -531,6 +541,11 @@ async def poll_pending_sends():
                 conv    = _db_get_conversation(conv_id)
                 if not conv:
                     _db_mark_pending_send(pend_id, "failed")
+                    continue
+                if conv.get("status") == "closed":
+                    # Диалог уже закрыт другой (более ранней) записью в очереди —
+                    # вторая защита от дублирующей отправки клиенту.
+                    _db_mark_pending_send(pend_id, "done")
                     continue
                 acc_cl = acc_clients.get(conv["account_id"])
                 if not acc_cl:
