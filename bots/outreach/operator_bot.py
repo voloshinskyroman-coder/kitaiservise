@@ -12,7 +12,8 @@ def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
 _socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 BOT_TOKEN     = os.environ["OPERATOR_BOT_TOKEN"]
-OPERATOR_ID   = int(os.environ["OPERATOR_USER_ID"])
+OPERATOR_IDS  = [int(x) for x in os.environ["OPERATOR_USER_ID"].split(",") if x.strip()]
+OPERATOR_ID   = OPERATOR_IDS[0]  # для обратной совместимости (notify_sent и т.п.)
 
 
 def _esc(s: str) -> str:
@@ -52,9 +53,9 @@ def answer_cb(cb_id: str, text: str):
     bot_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": text})
 
 
-def remove_buttons(message_id: int):
+def remove_buttons(message_id: int, chat_id: int = OPERATOR_ID):
     bot_api("editMessageReplyMarkup", {
-        "chat_id": OPERATOR_ID,
+        "chat_id": chat_id,
         "message_id": message_id,
         "reply_markup": {"inline_keyboard": []},
     })
@@ -62,7 +63,8 @@ def remove_buttons(message_id: int):
 
 def notify_reply(conv_id: int, username: str | None, tg_id: str,
                  our_msg: str, their_reply: str, ai_draft: str,
-                 manager_name: str | None = None, manager_phone: str | None = None) -> int:
+                 manager_name: str | None = None, manager_phone: str | None = None) -> dict[int, int]:
+    """Рассылает карточку всем операторам. Возвращает {chat_id: message_id}."""
     name = f"@{username}" if username else f"tg_id:{tg_id}"
     manager_line = ""
     if manager_name or manager_phone:
@@ -77,23 +79,29 @@ def notify_reply(conv_id: int, username: str | None, tg_id: str,
         f"💬 <b>Ответил:</b>\n<i>{_esc(their_reply[:300])}</i>\n\n"
         f"🤖 <b>Черновик ответа:</b>\n{_esc(ai_draft)}"
     )
-    result = bot_api("sendMessage", {
-        "chat_id": OPERATOR_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "reply_markup": {"inline_keyboard": [[
-            {"text": "✅ Отправить",  "callback_data": f"send:{conv_id}"},
-            {"text": "✏️ Изменить",  "callback_data": f"edit:{conv_id}"},
-            {"text": "❌ Пропустить", "callback_data": f"skip:{conv_id}"},
-        ]]},
-    })
-    return result.get("result", {}).get("message_id", 0)
+    message_ids = {}
+    for chat_id in OPERATOR_IDS:
+        result = bot_api("sendMessage", {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": [[
+                {"text": "✅ Отправить",  "callback_data": f"send:{conv_id}"},
+                {"text": "✏️ Изменить",  "callback_data": f"edit:{conv_id}"},
+                {"text": "❌ Пропустить", "callback_data": f"skip:{conv_id}"},
+            ]]},
+        })
+        msg_id = result.get("result", {}).get("message_id", 0)
+        if msg_id:
+            message_ids[chat_id] = msg_id
+    return message_ids
 
 
 def notify_sent(username: str | None, tg_id: str, text: str):
     name = f"@{username}" if username else f"tg_id:{tg_id}"
-    bot_api("sendMessage", {
-        "chat_id": OPERATOR_ID,
-        "text": f"✅ Отправлено {_esc(name)}:\n\n{_esc(text)}",
-        "parse_mode": "HTML",
-    })
+    for chat_id in OPERATOR_IDS:
+        bot_api("sendMessage", {
+            "chat_id": chat_id,
+            "text": f"✅ Отправлено {_esc(name)}:\n\n{_esc(text)}",
+            "parse_mode": "HTML",
+        })

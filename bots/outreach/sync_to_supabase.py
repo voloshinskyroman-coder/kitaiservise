@@ -22,6 +22,11 @@ ACCOUNTS_JSON = str(OUTREACH_DIR / "accounts.json")
 AVATAR_DIR    = Path("/tmp/avatars")
 BUCKET        = "avatars"
 
+LLM_API_KEY  = os.environ.get("LLM_API_KEY", "")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+SENTIMENT_MODEL = "openai/gpt-4o"
+SENTIMENT_BATCH_LIMIT = 20  # не больше N за один цикл синка, чтобы не улететь по цене/rate limit
+
 MSK = timezone(timedelta(hours=3))
 
 def today_msk():
@@ -166,8 +171,162 @@ async def sync_missing_profiles(acc_cfgs: dict, sb_accounts: list, active_sessio
             print(f"[sync] профиль обновлён: {name} ({session})")
         await asyncio.sleep(1)
 
+SENTIMENT_SYSTEM_PROMPT = """Ты анализируешь переписку менеджера компании KitaiService (доставка товаров
+из Китая под ключ: Taobao/1688/Pinduoduo, растаможка) с человеком, которому написали первыми (холодная
+рассылка). Тебе дана вся переписка целиком.
+
+Классифицируй ВЕСЬ разговор целиком, не только последнюю реплику:
+- "green" — реальный интерес, готов двигаться дальше: согласился на расчёт, даёт детали груза
+  (категория/вес/объём), спрашивает как оформить заявку.
+- "warm" — было реальное вовлечение (спрашивал про сроки/стоимость/растаможку, писал развёрнуто про свой
+  товар), но разговор завис на возражении или оборвался без явного да/нет — стоит дожимать вручную.
+- "red" — явный отказ или неактуальность: не интересно, уже есть карго/логист/поставщик доставки,
+  сам возит, просит не писать, "спасибо не надо" и т.п. — даже если сформулировано мягко.
+- "gray" — коротко, неинформативно, слишком рано судить, не по теме — реального вовлечения не было.
+
+Ответь строго JSON без пояснений вокруг: {"sentiment": "green"|"warm"|"red"|"gray", "reason": "<кратко по-русски, 1 предложение>"}"""
+
+
+def classify_sentiment(history: list) -> tuple[str, str] | None:
+    if not LLM_API_KEY:
+        return None
+    lines = []
+    for m in history:
+        role = "Менеджер" if m["direction"] == "out" else "Человек"
+        lines.append(f"{role}: {m['text']}")
+    payload = {
+        "model": SENTIMENT_MODEL,
+        "messages": [
+            {"role": "system", "content": SENTIMENT_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        "temperature": 0,
+        "max_tokens": 150,
+        "response_format": {"type": "json_object"},
+    }
+    req = urllib.request.Request(
+        LLM_BASE_URL.rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            content = json.loads(resp.read())["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+        sentiment = parsed.get("sentiment")
+        if sentiment not in ("green", "warm", "red", "gray"):
+            return None
+        return sentiment, (parsed.get("reason") or "")[:300]
+    except Exception as e:
+        print(f"[sentiment] ошибка классификации: {e}")
+        return None
+
+
+def sync_reply_sentiment(conn):
+    """Классифицирует реакцию ответивших контактов через LLM (полный контекст переписки),
+    не больше SENTIMENT_BATCH_LIMIT за цикл. Результат кэшируется в Supabase — считаем один раз."""
+    if not LLM_API_KEY:
+        return
+    # status='eq.replied' раньше пропускал тех, кого после ответа перевели в другой статус
+    # (например 'skipped' — оператор закрыл диалог) — они навсегда оставались без sentiment,
+    # хотя реально отвечали. history всё равно пуст для тех, кто не писал (см. continue ниже),
+    # так что лишних вызовов LLM это не добавляет — только чуть шире кандидатский список.
+    status, body = supabase_req(
+        "GET", "/rest/v1/outreach_contacts",
+        params="?select=id&status=neq.new&sentiment=is.null&limit=" + str(SENTIMENT_BATCH_LIMIT)
+    )
+    if status != 200:
+        return
+    pending = json.loads(body)
+    if not pending:
+        return
+    print(f"[sentiment] классифицирую {len(pending)} ответивших контактов...")
+    for row in pending:
+        contact_id = row["id"]
+        history = conn.execute(
+            "SELECT direction, text FROM messages WHERE contact_id=? AND text IS NOT NULL ORDER BY id ASC",
+            (contact_id,)
+        ).fetchall()
+        if not history:
+            continue
+        result = classify_sentiment([dict(h) for h in history])
+        if not result:
+            continue
+        sentiment, reason = result
+        supabase_req("PATCH", "/rest/v1/outreach_contacts",
+                     data={"sentiment": sentiment, "sentiment_reason": reason},
+                     params=f"?id=eq.{contact_id}")
+    print(f"[sentiment] готово")
+
+
+def pull_pending_replies():
+    """Забирает ответы оператора из админки (Supabase.outreach_pending_replies),
+    кладёт их в локальную conversations.ai_draft и ставит в очередь
+    pending_operator_sends — оттуда их разберёт poll_pending_sends() в демоне."""
+    status, body = supabase_req("GET", "/rest/v1/outreach_pending_replies",
+                                 params="?processed=eq.false&order=id.asc")
+    if status != 200:
+        print(f"[sync] pull_pending_replies GET failed ({status}): {body[:300]}")
+        return
+    rows = json.loads(body)
+    if not rows:
+        return
+
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    now_local = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for row in rows:
+        try:
+            action = row.get("action") or "send"
+            conv = conn.execute(
+                "SELECT id FROM conversations WHERE contact_id=? AND account_id=? "
+                "ORDER BY id DESC LIMIT 1",
+                (row["contact_id"], row["account_id"])
+            ).fetchone()
+
+            if action == "skip":
+                # Пропустить — просто закрываем диалог, ничего не отправляем клиенту.
+                if conv:
+                    conn.execute(
+                        "UPDATE conversations SET status='closed', updated_at=? WHERE id=?",
+                        (now_local, conv[0])
+                    )
+                conn.commit()
+                supabase_req("PATCH", "/rest/v1/outreach_pending_replies",
+                             data={"processed": True}, params=f"?id=eq.{row['id']}")
+                print(f"[sync] pending_reply id={row['id']} → skip")
+                continue
+
+            if conv:
+                conv_id = conv[0]
+                conn.execute(
+                    "UPDATE conversations SET ai_draft=?, status='open', updated_at=? WHERE id=?",
+                    (row["text"], now_local, conv_id)
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO conversations (contact_id, account_id, status, ai_draft, updated_at) "
+                    "VALUES (?, ?, 'open', ?, ?)",
+                    (row["contact_id"], row["account_id"], row["text"], now_local)
+                )
+                conv_id = cur.lastrowid
+            conn.execute("INSERT INTO pending_operator_sends (conv_id) VALUES (?)", (conv_id,))
+            conn.commit()
+            supabase_req("PATCH", "/rest/v1/outreach_pending_replies",
+                         data={"processed": True}, params=f"?id=eq.{row['id']}")
+            print(f"[sync] pending_reply id={row['id']} → conv={conv_id}")
+        except Exception as e:
+            print(f"[sync] pull_pending_replies row {row.get('id')} error: {e}")
+    conn.close()
+
+
 def run():
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        pull_pending_replies()
+    except Exception as e:
+        print(f"[sync] pull_pending_replies error: {e}")
 
     acc_cfgs = {}
     try:
@@ -283,6 +442,12 @@ def run():
         print(f"[sync] activity: {len(act_rows)}")
     except Exception as e:
         print(f"[sync] activity error: {e}")
+
+    try:
+        sync_reply_sentiment(conn)
+    except Exception as e:
+        print(f"[sentiment] sync error: {e}")
+
     conn.close()
     print(f"[sync] done at {now_iso}")
 

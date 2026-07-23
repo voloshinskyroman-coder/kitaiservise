@@ -1,8 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useState } from 'react'
-import type { OutreachAccount, OutreachData } from '@/lib/queries/outreach'
-import { classifyReply } from '@/lib/config/replySentiment'
+import type { OutreachAccount, OutreachContact, OutreachData } from '@/lib/queries/outreach'
 
 const STATUS_COLOR: Record<string, string> = {
   new: 'bg-gray-100 text-gray-500',
@@ -210,12 +209,86 @@ function AccountCard({
   )
 }
 
+function ReplyBox({
+  contactId,
+  accountId,
+  onSent,
+  showSkip,
+}: {
+  contactId: number
+  accountId: number | null
+  onSent: () => void
+  showSkip?: boolean
+}) {
+  const [text, setText] = useState('')
+  const [state, setState] = useState<'idle' | 'sending' | 'queued' | 'skipped' | 'error'>('idle')
+
+  async function post(action: 'send' | 'skip') {
+    if (!accountId || state === 'sending') return
+    if (action === 'send' && !text.trim()) return
+    setState('sending')
+    const res = await fetch('/api/admin/outreach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_id: contactId, account_id: accountId, action, text: text.trim() }),
+    })
+    if (!res.ok) {
+      setState('error')
+      return
+    }
+    if (action === 'send') setText('')
+    setState(action === 'send' ? 'queued' : 'skipped')
+    onSent()
+  }
+
+  return (
+    <div className="mt-3">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void post('send') }
+        }}
+        disabled={state === 'sending'}
+        placeholder="Написать ответ от имени менеджера..."
+        rows={2}
+        className="w-full resize-none rounded-xl border border-[#E0DBD5] p-3 text-sm outline-none focus:border-[#4A7B9D] disabled:opacity-50"
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <button
+          onClick={() => void post('send')}
+          disabled={!accountId || !text.trim() || state === 'sending'}
+          className="rounded-full bg-[#4A7B9D] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[#3a6b8d] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {state === 'sending' ? 'Отправляю...' : 'Отправить'}
+        </button>
+        {showSkip && (
+          <button
+            onClick={() => void post('skip')}
+            disabled={!accountId || state === 'sending'}
+            className="rounded-full border border-[#E0DBD5] px-3 py-1.5 text-xs text-[#666] transition-colors hover:bg-[#FAF8F5] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Пропустить
+          </button>
+        )}
+        {state === 'queued' && <span className="text-xs text-green-600">✅ В очереди — уйдёт за секунды</span>}
+        {state === 'skipped' && <span className="text-xs text-[#888]">Пропущено</span>}
+        {state === 'error' && <span className="text-xs text-red-600">Ошибка, попробуй ещё раз</span>}
+        {!accountId && <span className="text-xs text-[#AAA]">Нет привязанного менеджера — отправка недоступна</span>}
+      </div>
+    </div>
+  )
+}
+
 export function OutreachDashboard({ initialData }: { initialData: OutreachData }) {
   const [data, setData] = useState<OutreachData>(initialData)
   const [refreshing, setRefreshing] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [seenAt, setSeenAt] = useState<Record<number, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('kitaiservice_outreach_seen') ?? '{}') } catch { return {} }
+  })
 
   async function refresh() {
     setRefreshing(true)
@@ -226,18 +299,48 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
 
   useEffect(() => {
     // Только подписка на внешний источник по таймеру — начальные данные уже пришли с сервера.
-    const interval = setInterval(() => { void refresh() }, 60_000)
+    const interval = setInterval(() => { void refresh() }, 20_000)
     return () => clearInterval(interval)
   }, [])
 
-  const { accounts, contacts, conversations, activity, messages, synced_at, stats } = data
+  const { accounts, contacts, activity, messages, synced_at, stats } = data
+
+  // c.status — это ТЕКУЩЕЕ состояние обработки (может стать 'skipped' и после реального
+  // ответа, если оператор потом пропустил диалог), а не флаг "отвечал ли человек когда-либо".
+  // "Ответил" должен показывать всех, у кого есть хоть одно входящее сообщение, иначе те, кого
+  // пропустили после ответа, тихо исчезают из вкладки и из приоритетной сортировки.
+  const repliedContactIds = new Set(messages.filter((m) => m.direction === 'in').map((m) => m.contact_id))
+
+  function markSeen(contactId: number) {
+    const now = new Date().toISOString()
+    setSeenAt((prev) => {
+      const next = { ...prev, [contactId]: now }
+      try { localStorage.setItem('kitaiservice_outreach_seen', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+
+  // Непрочитанным считаем контакт, у которого последнее входящее сообщение свежее
+  // и чем последний исходящий ответ менеджера, и чем момент, когда оператор
+  // последний раз открывал этот диалог (см. seenAt / markSeen).
+  function hasUnread(contactId: number) {
+    const contactMsgs = messages.filter((m) => m.contact_id === contactId)
+    const inMsgs = contactMsgs.filter((m) => m.direction === 'in')
+    if (!inMsgs.length) return false
+    const latestIn = inMsgs.map((m) => m.sent_at ?? '').sort().at(-1) ?? ''
+    const outMsgs = contactMsgs.filter((m) => m.direction === 'out')
+    const latestOut = outMsgs.map((m) => m.sent_at ?? '').sort().at(-1) ?? ''
+    if (latestOut && latestOut > latestIn) return false
+    const lastSeen = seenAt[contactId]
+    return !lastSeen || latestIn > lastSeen
+  }
 
   const sentByAccount = new Map<string, { sent: number; replied: number }>()
   for (const c of contacts) {
     if (!c.account_session) continue
     const cur = sentByAccount.get(c.account_session) ?? { sent: 0, replied: 0 }
-    if (c.status === 'sent' || c.status === 'replied') cur.sent += 1
-    if (c.status === 'replied') cur.replied += 1
+    if (c.status === 'sent' || repliedContactIds.has(c.id)) cur.sent += 1
+    if (repliedContactIds.has(c.id)) cur.replied += 1
     sentByAccount.set(c.account_session, cur)
   }
 
@@ -246,17 +349,33 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
     accs: accounts.filter((a) => (key === 'black' ? a.status === 'dead' : getAccountTier(a) === key)),
   }))
 
-  const filteredContacts = contacts.filter((c) => {
-    if (statusFilter !== 'all' && c.status !== statusFilter) return false
+  const filteredContactsBase = contacts.filter((c) => {
+    if (statusFilter === 'replied') {
+      if (!repliedContactIds.has(c.id)) return false
+    } else if (statusFilter !== 'all' && c.status !== statusFilter) {
+      return false
+    }
     if (search) {
       const q = search.toLowerCase()
       return (c.username ?? '').toLowerCase().includes(q) || c.tg_id.includes(q)
     }
     return true
   })
+  // При "все" — ответившие всегда наверху, среди них сначала "дожать", потом интерес,
+  // потом неясно, потом отказ; иначе — как отфильтровано, без пересортировки.
+  const filteredContacts = statusFilter === 'all'
+    ? [...filteredContactsBase].sort((a, b) => {
+        const priority = (c: OutreachContact) => (repliedContactIds.has(c.id) ? 0 : c.status === 'sent' ? 1 : 2)
+        const pd = priority(a) - priority(b)
+        if (pd !== 0) return pd
+        const sentPriority = (s: string | null) => (s === 'warm' ? 0 : s === 'green' ? 1 : s === 'gray' ? 2 : s === 'red' ? 3 : 4)
+        const sd = sentPriority(a.sentiment) - sentPriority(b.sentiment)
+        if (sd !== 0) return sd
+        return (b.replied_at ?? b.sent_at ?? '').localeCompare(a.replied_at ?? a.sent_at ?? '')
+      })
+    : filteredContactsBase
 
   const proxyEvents = activity.filter((a) => a.type === 'proxy_down' || a.type === 'proxy_up').sort((a, b) => b.done_at.localeCompare(a.done_at))
-  const openConversations = conversations.filter((c) => c.status === 'open')
 
   return (
     <div className="space-y-6">
@@ -346,40 +465,6 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
         </div>
       </div>
 
-      {openConversations.length > 0 && (
-        <div>
-          <h2 className="mb-3 text-sm font-semibold text-[#555]">Открытые диалоги ({openConversations.length})</h2>
-          <div className="space-y-2">
-            {openConversations.map((conv) => {
-              const clientMsgs = messages.filter((m) => m.contact_id === conv.contact_id && m.direction === 'in').sort((a, b) => (a.sent_at ?? '').localeCompare(b.sent_at ?? ''))
-              return (
-                <div key={conv.id} className="rounded-2xl bg-white p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-[#1A1A1A]">@{conv.outreach_contacts?.username ?? conv.contact_id}</div>
-                      <div className="mt-0.5 text-xs text-[#888]">{fmt(conv.updated_at)}</div>
-                    </div>
-                    {conv.outreach_contacts?.username && (
-                      <a href={`https://t.me/${conv.outreach_contacts.username}`} target="_blank" rel="noreferrer" className="rounded-full bg-[#4A7B9D] px-3 py-1 text-xs text-white hover:bg-[#3a6b8d] transition-colors">✍️ Написать</a>
-                    )}
-                  </div>
-                  {clientMsgs.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {clientMsgs.map((m) => (
-                        <div key={m.id} className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-xs leading-relaxed text-[#1A1A1A]">{m.text}</div>
-                      ))}
-                    </div>
-                  )}
-                  {conv.ai_draft && (
-                    <div className="mt-3 rounded-xl bg-[#F8F6F3] p-3 text-xs leading-relaxed text-[#555]">🤖 {conv.ai_draft}</div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
       <div>
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <h2 className="text-sm font-semibold text-[#555]">Контакты</h2>
@@ -418,14 +503,23 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
                   const lastInMsg = [...contactMsgs].reverse().find((m) => m.direction === 'in') ?? null
                   const manager = accounts.find((a) => a.session === c.account_session) ?? null
                   const isSelected = selectedId === c.id
+                  const unread = repliedContactIds.has(c.id) && hasUnread(c.id)
                   return (
                     <Fragment key={c.id}>
                       <tr
-                        onClick={() => setSelectedId(isSelected ? null : c.id)}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedId(null)
+                          } else {
+                            setSelectedId(c.id)
+                            markSeen(c.id)
+                          }
+                        }}
                         className={`cursor-pointer border-t border-[#F8F6F3] transition-colors ${isSelected ? 'bg-[#F5F0EB]' : 'hover:bg-[#FAF8F5]'}`}
                       >
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-2">
+                            {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" />}
                             <span className="font-medium text-[#1A1A1A]">{c.username ? `@${c.username}` : c.tg_id}</span>
                             <a
                               href={c.username ? `https://t.me/${c.username}` : `tg://user?id=${c.tg_id}`}
@@ -439,20 +533,32 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
                           <div className="text-xs text-[#BBB]">{c.tg_id}</div>
                         </td>
                         <td className="px-4 py-2.5">
-                          {c.status === 'replied' && lastInMsg ? (
-                            classifyReply(lastInMsg.text) === 'green' ? (
-                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✅ Интерес</span>
-                            ) : classifyReply(lastInMsg.text) === 'red' ? (
-                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">❌ Отказ</span>
-                            ) : (
-                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">💬 Ответил</span>
-                            )
+                          {repliedContactIds.has(c.id) && lastInMsg ? (
+                            <span
+                              title={c.sentiment_reason ?? undefined}
+                              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                c.sentiment === 'green' ? 'bg-green-100 text-green-700'
+                                : c.sentiment === 'warm' ? 'bg-orange-100 text-orange-700'
+                                : c.sentiment === 'red' ? 'bg-red-100 text-red-700'
+                                : 'bg-gray-100 text-gray-500'
+                              }`}
+                            >
+                              {c.sentiment === 'green' ? '✅ Интерес'
+                                : c.sentiment === 'warm' ? '🔥 Дожать'
+                                : c.sentiment === 'red' ? '❌ Отказ'
+                                : c.sentiment === 'gray' ? '🤷 Неясно'
+                                : '💬 Ответил (оценка...)'}
+                            </span>
                           ) : (
                             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[c.status] ?? 'bg-gray-100 text-gray-500'}`}>{STATUS_RU[c.status] ?? c.status}</span>
                           )}
                         </td>
                         <td className="max-w-xs px-4 py-2.5">
-                          {lastInMsg ? <div className="max-w-[200px] truncate text-xs text-[#666]">{lastInMsg.text}</div> : <span className="text-xs text-[#CCC]">—</span>}
+                          {lastInMsg ? (
+                            <div className={`max-w-[200px] truncate text-xs leading-relaxed ${unread ? 'font-semibold text-[#1A1A1A]' : 'text-[#666]'}`}>{lastInMsg.text}</div>
+                          ) : (
+                            <span className="text-xs text-[#CCC]">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           {manager ? (
@@ -494,6 +600,12 @@ export function OutreachDashboard({ initialData }: { initialData: OutreachData }
                                 ))}
                               </div>
                             )}
+                            <ReplyBox
+                              contactId={c.id}
+                              accountId={c.account_id}
+                              onSent={() => void refresh()}
+                              showSkip
+                            />
                           </td>
                         </tr>
                       )}

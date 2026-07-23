@@ -79,26 +79,44 @@ export default function QuizPage() {
     webApp.ready()
     webApp.expand()
 
-    const res = await fetch('/api/telegram/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData: webApp.initData }),
-    })
+    // Без try/catch и таймаута сетевой сбой (обрыв, DNS) здесь просто зависал навсегда —
+    // sessionId никогда не выставлялся, кнопки оставались disabled без единой подсказки
+    // пользователю, что что-то пошло не так (см. репорт: "нажимает начать расчёт, висит").
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10_000)
+      let res: Response
+      try {
+        res = await fetch('/api/telegram/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: webApp.initData }),
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeoutId)
+      }
 
-    if (!res.ok) {
-      setError('Не удалось начать сессию')
+      if (!res.ok) {
+        setError('Не удалось начать сессию — попробуйте ещё раз')
+        setQuestion(null)
+        startedRef.current = false
+        return
+      }
+
+      const data = await res.json()
+      setSessionId(data.sessionId)
+      setQuestion(data.question)
+      setSelectedValues(data.question?.preselected ?? [])
+      setStep(data.step ?? 0)
+      setHistory(data.history ?? [])
+      setAttachment(null)
+      setUploadError(null)
+    } catch {
+      setError('Нет соединения — попробуйте ещё раз')
       setQuestion(null)
-      return
+      startedRef.current = false
     }
-
-    const data = await res.json()
-    setSessionId(data.sessionId)
-    setQuestion(data.question)
-    setSelectedValues(data.question?.preselected ?? [])
-    setStep(data.step ?? 0)
-    setHistory(data.history ?? [])
-    setAttachment(null)
-    setUploadError(null)
   }
 
   useEffect(() => {
@@ -228,7 +246,18 @@ export default function QuizPage() {
       )}
 
       <div className="flex flex-1 flex-col justify-center gap-8">
-        {error && <p className="text-center text-red-600">{error}</p>}
+        {error && (
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-center text-red-600">{error}</p>
+            <button
+              type="button"
+              onClick={() => { setError(null); void startSession() }}
+              className="cursor-pointer rounded-xl bg-cta px-4 py-2 text-sm font-medium text-white"
+            >
+              Повторить
+            </button>
+          </div>
+        )}
 
         {question?.type === 'info' && (
           <div className="flex flex-col gap-5 rounded-2xl bg-surface p-5">

@@ -40,14 +40,21 @@ from telethon.errors import (UserAlreadyParticipantError, FloodWaitError,
                               UserDeactivatedBanError, AuthKeyUnregisteredError)
 
 # Telethon открывает свой sqlite-файл сессии (manager_XXX.session) без timeout
-# (дефолт sqlite3 — 5 сек), из-за чего частые обрывы/реконнекты на нестабильных
-# прокси регулярно валятся с "database is locked" на keepalive/save_states.
-# Патчим таймаут на уровне соединения, саму библиотеку не трогаем.
+# (дефолт sqlite3 — 5 сек) и в дефолтном rollback-journal режиме, где любая запись
+# блокирует вообще всё (и читателей, и писателей). Из-за этого частые обрывы/
+# реконнекты на нестабильных прокси регулярно валятся с "database is locked" на
+# keepalive/save_states — старое соединение ещё не отпустило файл, новое уже пишет.
+# Патчим таймаут + переключаем в WAL (как и общий outreach.db) на уровне соединения,
+# саму библиотеку не трогаем.
 def _patch_telethon_sqlite_timeout(seconds: float = 30.0):
     from telethon.sessions.sqlite import SQLiteSession as _SQLiteSession
     def _cursor(self):
         if self._conn is None:
             self._conn = sqlite3.connect(self.filename, check_same_thread=False, timeout=seconds)
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+            except Exception:
+                pass
         return self._conn.cursor()
     _SQLiteSession._cursor = _cursor
 
@@ -282,13 +289,15 @@ def _db_upsert_conversation(contact_id: int, account_id: int, ai_draft: str = ""
         c.row_factory = sqlite3.Row
         row = c.execute("SELECT id FROM conversations WHERE contact_id=?", (contact_id,)).fetchone()
         if row:
-            c.execute("UPDATE conversations SET ai_draft=?, updated_at=datetime('now') WHERE id=?",
+            # status='open' и здесь — новое сообщение реоткрывает диалог, даже
+            # если предыдущий был закрыт (уже отвечен) оператором ранее.
+            c.execute("UPDATE conversations SET ai_draft=?, status='open', updated_at=datetime('now') WHERE id=?",
                       (ai_draft, row["id"]))
             c.commit()
             cid = row["id"]
         else:
             cur = c.execute(
-                "INSERT INTO conversations (contact_id, account_id, ai_draft) VALUES (?,?,?)",
+                "INSERT INTO conversations (contact_id, account_id, ai_draft, status) VALUES (?,?,?,'open')",
                 (contact_id, account_id, ai_draft)
             )
             c.commit()
@@ -603,6 +612,39 @@ def _db_mark_pending_send(pend_id: int, status: str):
         c.close()
     except Exception as e:
         log.warning(f"[pending_send] mark error: {e}")
+
+
+def _claim_spare_proxy(session: str, release: tuple | None = None):
+    """Атомарно берёт свободный прокси и помечает его занятым данным session —
+    поиск + пометка (+ опциональное освобождение старого) в одной транзакции
+    (BEGIN IMMEDIATE), чтобы исключить гонку: несколько циклов демона и ручные
+    скрипты могли одновременно увидеть один и тот же прокси "свободным" и оба
+    его занять — то самое дублирование прокси между разными аккаунтами.
+    release: (host, port, owner_to_check) — снимает assigned_to с этой записи,
+    но только если она всё ещё числится за owner_to_check."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT protocol, host, port, username, password FROM proxies "
+            "WHERE assigned_to IS NULL AND active=1 ORDER BY RANDOM() LIMIT 1"
+        ).fetchone()
+        spare = None
+        if row:
+            spare = [row[0], row[1], row[2], True, row[3], row[4]]
+            conn.execute("UPDATE proxies SET assigned_to=? WHERE host=? AND port=?",
+                         (session, row[1], row[2]))
+        if release:
+            r_host, r_port, r_owner = release
+            conn.execute(
+                "UPDATE proxies SET assigned_to=NULL WHERE host=? AND port=? AND assigned_to=?",
+                (r_host, r_port, r_owner))
+        conn.commit()
+        conn.close()
+        return spare
+    except Exception as e:
+        log.warning(f"[proxy] ошибка атомарного клейма для {session}: {e}")
+        return None
 
 
 # ── DB хелперы ────────────────────────────────────────────────────────────────
@@ -1289,8 +1331,16 @@ def build_message(template, first_name, gender):
         .replace("{РЕШИЛ}", reshil)
         .replace("{ПРИВЕТСТВИЕ}", privet))
 
+SENDER_TIMEOUT = 3000  # 50 мин — каждый аккаунт внутри уже сам ограничен 40 минутами
+# (_send_from_guarded), и все они идут через gather() параллельно, а не по очереди —
+# так что этот внешний лимит почти никогда не должен срабатывать сам по себе, это лишь
+# страховка на код ДО gather() (чтение файлов сообщений и т.п.), который per-account
+# таймаутом не покрыт. Если он всё же сработает — точно настоящее зависание, а не
+# честная долгая загрузка (см. простой ~30ч 19-20.07 и утроение цикла в Vellar d86e752).
+_sender_timeout_streak = 0  # подряд идущих обрывов — алертим только если это не разовая долгая загрузка
+
 async def task_sender():
-    global _sender_running
+    global _sender_running, _sender_timeout_streak
     if _sender_running:
         log.info("[sender] уже запущен — пропускаю дублирующий запуск")
         return
@@ -1298,7 +1348,13 @@ async def task_sender():
         return
     _sender_running = True
     try:
-        await _task_sender_inner()
+        await asyncio.wait_for(_task_sender_inner(), timeout=SENDER_TIMEOUT)
+        _sender_timeout_streak = 0
+    except asyncio.TimeoutError:
+        _sender_timeout_streak += 1
+        log.warning(f"[sender] завис дольше {SENDER_TIMEOUT}с (подряд #{_sender_timeout_streak}) — принудительно оборвал")
+        if _sender_timeout_streak >= 3:
+            tg_alert(f"⚠️ [sender] завис {_sender_timeout_streak} раза подряд дольше {SENDER_TIMEOUT//60} мин — похоже на настоящее зависание, не на разовую нагрузку")
     finally:
         _sender_running = False
 
@@ -1575,9 +1631,13 @@ async def _task_sender_inner():
                 elif err_name == "ValueError" and "No user has" in err_str and uname:
                     # Это не баг Telethon — ValueError тут лишь пересказывает ответ сервера
                     # (UsernameNotOccupiedError), т.е. сам Telegram в моменте сказал "не найден"
-                    # для реального юзернейма. Мгновенный повтор с высокой вероятностью
-                    # упрётся в то же самое — ждём немного и пробуем через сырой API-запрос.
-                    await asyncio.sleep(random.uniform(120, 180))
+                    # для реального юзернейма. Похоже на мягкий троттлинг резолва конкретного
+                    # аккаунта или протухший кэш get_entity — пробуем ResolveUsernameRequest
+                    # напрямую (мимо кэша) СРАЗУ, без sleep(120-180с): эта пауза внутри
+                    # asyncio.gather() всей группы утраивала время цикла до 3+ часов, когда
+                    # несколько аккаунтов подряд ловили неудачный резолв одновременно (тот же
+                    # класс бага чинили в Vellar — см. commit d86e752). Если и повторный резолв
+                    # не поможет — просто идём дальше, следующий цикл (~30 мин) попробует опять.
                     try:
                         from telethon.tl.functions.contacts import ResolveUsernameRequest
                         _resolved = await client(ResolveUsernameRequest(uname))
@@ -1631,7 +1691,18 @@ async def _task_sender_inner():
             await asyncio.sleep(random.uniform(delay_min, delay_max))
         conn_check.close()
 
-    await asyncio.gather(*[send_from(s, idx) for idx, s in enumerate(sender_sessions)])
+    async def _send_from_guarded(session, idx):
+        # Таймаут НА КАЖДЫЙ аккаунт отдельно, а не на весь gather() разом (см. commit
+        # d86e752 в Vellar) — если один застрянет (сеть, необнаруженный сценарий),
+        # обрывается только он, а не весь цикл рассылки группы на часы.
+        try:
+            await asyncio.wait_for(send_from(session, idx), timeout=2400)
+        except asyncio.TimeoutError:
+            log.warning(f"[{session[-12:]}] не уложился в 40 мин — прерываю, чтобы не держать всю группу")
+        except Exception as e:
+            log.warning(f"[{session[-12:]}] send_from упал с ошибкой: {e}")
+
+    await asyncio.gather(*[_send_from_guarded(s, idx) for idx, s in enumerate(sender_sessions)])
     log.info("=== Рассылка завершена ===")
 
 # ── Планировщик ───────────────────────────────────────────────────────────────
@@ -1808,7 +1879,8 @@ async def keepalive():
 
 # ── Supabase синк ─────────────────────────────────────────────────────────────
 async def sync_loop():
-    """Синхронизирует outreach.db → Supabase каждую минуту."""
+    """Синхронизирует outreach.db → Supabase каждые ~20с (в т.ч. забирает
+    очередь ответов оператора из админки — держим цикл коротким ради задержки)."""
     import subprocess
     while running:
         try:
@@ -1821,7 +1893,7 @@ async def sync_loop():
             log.info("[sync] supabase ok")
         except Exception as e:
             log.warning(f"[sync] ошибка: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(20)
 
 
 # ── Auto-resume expired pauses ────────────────────────────────────────────────
@@ -2106,29 +2178,47 @@ async def main():
                     log.error(f"  ❌ {session}: {e}")
                     return
 
-    for _bi in range(0, len(accs), CONNECT_BATCH_SIZE):
-        _batch = accs[_bi:_bi + CONNECT_BATCH_SIZE]
-        log.info(f"[startup] батч {_bi // CONNECT_BATCH_SIZE + 1}: {len(_batch)} аккаунтов")
-        await connect_batch(_batch)
-        if _bi + CONNECT_BATCH_SIZE < len(accs):
-            delay = CONNECT_BATCH_DELAY + random.uniform(-30, 30)
-            log.info(f"[startup] пауза {delay:.0f}с перед следующим аккаунтом")
-            await asyncio.sleep(delay)
-    log.info(f"Подключено: {len(clients)}/{len(accs)}")
-    tg_alert(f"✅ Daemon запущен: {len(clients)}/{len(accs)} аккаунтов подключено")
+    _startup_done = False
 
-    # Регистрация хендлеров входящих теперь происходит внутри connect_one() —
-    # для стартового батча выше и для reconnect_loop() ниже одинаково.
-    log.info(f"[incoming] хендлеры зарегистрированы на {len(acc_clients)} аккаунтах")
+    async def startup_connect_all():
+        nonlocal _startup_done
+        # Раньше это был блокирующий цикл ДО общего gather() ниже — из-за чего
+        # scheduler/sync/poll_operator/reconnect_loop и т.д. не стартовали, пока
+        # весь батч (15-20 аккаунтов, ~2-3 мин каждый) не подключится целиком —
+        # до 30-40 минут после каждого рестарта без рассылки, синка и обработки
+        # кнопок оператора. Теперь это отдельная задача внутри того же gather(),
+        # так что фоновые циклы работают параллельно со стартовым подключением.
+        for _bi in range(0, len(accs), CONNECT_BATCH_SIZE):
+            _batch = accs[_bi:_bi + CONNECT_BATCH_SIZE]
+            log.info(f"[startup] батч {_bi // CONNECT_BATCH_SIZE + 1}: {len(_batch)} аккаунтов")
+            await connect_batch(_batch)
+            if _bi + CONNECT_BATCH_SIZE < len(accs):
+                delay = CONNECT_BATCH_DELAY + random.uniform(-30, 30)
+                log.info(f"[startup] пауза {delay:.0f}с перед следующим аккаунтом")
+                await asyncio.sleep(delay)
+        log.info(f"Подключено: {len(clients)}/{len(accs)}")
+        tg_alert(f"✅ Daemon запущен: {len(clients)}/{len(accs)} аккаунтов подключено")
+        # Регистрация хендлеров входящих происходит внутри connect_one() —
+        # для стартового батча выше и для reconnect_loop() ниже одинаково.
+        log.info(f"[incoming] хендлеры зарегистрированы на {len(acc_clients)} аккаунтах")
+        _startup_done = True
 
     async def reconnect_loop():
         """Каждые 5 мин переподключает аккаунты, выпавшие при старте (db locked, proxy timeout и т.д.).
         Аккаунты со статусом dead/disconnected/auth_error не трогаем."""
         reconnect_fail_count: dict[str, int] = {}
         proxy_swap_count: dict[str, int] = {}
-        proxy_exhausted_sessions: set[str] = set()
+        proxy_exhausted_at: dict[str, datetime] = {}
+        EXHAUSTED_RETRY_AFTER = timedelta(hours=1)
         while running:
             await asyncio.sleep(300)
+            if not _startup_done:
+                # Стартовый батч (startup_connect_all) теперь работает параллельно
+                # с этим циклом, а не до него — пока он не прошёл всех аккаунтов
+                # по очереди, "отсутствие в clients" ничего не значит (аккаунт
+                # просто ещё не дошёл до своей очереди), не путаем это с реальным
+                # сбоем реконнекта и не трогаем прокси.
+                continue
             # Подхватываем новые аккаунты, добавленные в accounts.json после старта
             try:
                 _fresh = json.loads((OUTREACH_DIR / "accounts.json").read_text())
@@ -2155,8 +2245,18 @@ async def main():
                 _c = sqlite3.connect(DB_PATH, timeout=20)
                 _c.row_factory = sqlite3.Row
                 for acc in missing:
-                    if acc["session"] in bad_auth_sessions or acc["session"] in proxy_exhausted_sessions:
+                    if acc["session"] in bad_auth_sessions:
                         continue
+                    _exhausted_at = proxy_exhausted_at.get(acc["session"])
+                    if _exhausted_at is not None:
+                        if datetime.now(timezone.utc) - _exhausted_at < EXHAUSTED_RETRY_AFTER:
+                            continue
+                        # Час прошёл — часто причиной 3 "мёртвых" прокси подряд была
+                        # перегрузка БД (database is locked), а не реально дохлые прокси.
+                        # Даём аккаунту ещё один шанс с чистого листа вместо вечного бана.
+                        proxy_exhausted_at.pop(acc["session"], None)
+                        proxy_swap_count.pop(acc["session"], None)
+                        log.info(f"[reconnect] {acc['session'][-12:]}: повторная попытка после часа в exhausted")
                     row = _c.execute(
                         "SELECT status FROM accounts WHERE session=?", (acc["session"],)
                     ).fetchone()
@@ -2177,29 +2277,12 @@ async def main():
                     continue
                 reconnect_fail_count[session] = 0
                 if proxy_swap_count.get(session, 0) >= 3:
-                    proxy_exhausted_sessions.add(session)
-                    log.warning(f"[reconnect] {session[-12:]}: 3 разных прокси не помогли — нужна ручная замена")
-                    tg_alert(f"🆘 {session[-12:]}: 3 прокси подряд не сработали — нужна ручная замена прокси")
+                    proxy_exhausted_at[session] = datetime.now(timezone.utc)
+                    log.warning(f"[reconnect] {session[-12:]}: 3 разных прокси не помогли — пробую снова через час")
+                    tg_alert(f"🆘 {session[-12:]}: 3 прокси подряд не сработали — авто-ретрай через час")
                     continue
                 old_proxy = acc["proxy"]
-                spare = None
-                try:
-                    _sc = sqlite3.connect(DB_PATH, timeout=20)
-                    _sr = _sc.execute(
-                        "SELECT protocol, host, port, username, password FROM proxies "
-                        "WHERE assigned_to IS NULL AND active=1 ORDER BY RANDOM() LIMIT 1"
-                    ).fetchone()
-                    if _sr:
-                        spare = [_sr[0], _sr[1], _sr[2], True, _sr[3], _sr[4]]
-                        _sc.execute("UPDATE proxies SET assigned_to=? WHERE host=? AND port=?",
-                                    (session, _sr[1], _sr[2]))
-                        _sc.execute(
-                            "UPDATE proxies SET assigned_to=NULL WHERE host=? AND port=? AND assigned_to=?",
-                            (old_proxy[1], old_proxy[2], session))
-                    _sc.commit()
-                    _sc.close()
-                except Exception as _pe:
-                    log.warning(f"[reconnect] ошибка поиска резерва для {session}: {_pe}")
+                spare = _claim_spare_proxy(session, release=(old_proxy[1], old_proxy[2], session))
                 if not spare:
                     log.warning(f"[reconnect] {session[-12:]}: прокси {old_proxy[1]} недоступен, резервов нет")
                     continue
@@ -2331,33 +2414,21 @@ async def main():
                     continue  # Ждём вторую проверку (~10 мин) чтобы не дёргать при кратком сбое
 
                 proxy_fail_count.pop(fail_key, None)
-                spare = None
-                try:
-                    _sc = sqlite3.connect(DB_PATH, timeout=20)
-                    _sr = _sc.execute(
-                        "SELECT protocol, host, port, username, password FROM proxies "
-                        "WHERE assigned_to IS NULL AND active=1 ORDER BY RANDOM() LIMIT 1"
-                    ).fetchone()
-                    if _sr:
-                        spare = [_sr[0], _sr[1], _sr[2], True, _sr[3], _sr[4]]
-                        _sc.execute("UPDATE proxies SET assigned_to=? WHERE host=? AND port=?",
-                                    (session, _sr[1], _sr[2]))
-                        # Освобождаем прокси, который только что признан мёртвым (host/port) —
-                        # неважно исходный он из accounts.json или уже был предыдущей заменой,
-                        # иначе он остаётся висеть "занятым" в базе навсегда.
-                        _sc.execute(
-                            "UPDATE proxies SET assigned_to=NULL WHERE host=? AND port=? AND assigned_to=?",
-                            (host, port, session))
-                    _sc.commit()
-                    _sc.close()
-                except Exception as _pe:
-                    log.warning(f"[proxy] ошибка поиска резерва: {_pe}")
+                # Освобождаем прокси, который только что признан мёртвым (host/port) —
+                # неважно исходный он из accounts.json или уже был предыдущей заменой,
+                # иначе он остаётся висеть "занятым" в базе навсегда.
+                spare = _claim_spare_proxy(session, release=(host, port, session))
 
                 proxy_overrides[session] = spare
                 if session in clients:
                     cl, _ = clients.pop(session)
                     try: await cl.disconnect()
                     except Exception: pass
+                    # Старый прокси уже мёртв — disconnect() не может сообщить об этом
+                    # Telegram-серверу, старая сессия ещё какое-то время видна как "живая".
+                    # Пауза даёт серверу время протухнуть её по таймауту, прежде чем
+                    # тот же auth key подключится через резервный IP — иначе AuthKeyDuplicatedError.
+                    await asyncio.sleep(8)
 
                 if spare:
                     log.info(f"[proxy] {session[-12:]}: {host} → резерв {spare[1]}")
@@ -2368,6 +2439,67 @@ async def main():
                     db_log(session, "proxy_down", f"{host}:{port} → спячка")
 
             await asyncio.sleep(300)
+
+    async def duplicate_proxy_loop():
+        """Каждые 30 мин проверяет по всему accounts.json, не сидят ли два аккаунта
+        на одном прокси (host+port+username), и разводит дубли из резервного пула.
+        Каждый процесс трогает только свои аккаунты (по _stable_group), но сверяется
+        с полным списком, чтобы ловить дубли и между группами."""
+        await asyncio.sleep(600)
+        while running:
+            try:
+                _all = json.loads((OUTREACH_DIR / "accounts.json").read_text())
+            except Exception as _e:
+                log.warning(f"[dedup-proxy] ошибка чтения accounts.json: {_e}")
+                await asyncio.sleep(1800)
+                continue
+
+            _by_proxy: dict[tuple, list[str]] = {}
+            for _a in _all:
+                _p = _a.get("proxy")
+                if not _p:
+                    continue
+                _by_proxy.setdefault((_p[1], _p[2], _p[4]), []).append(_a["session"])
+
+            for _key, _sessions in _by_proxy.items():
+                if len(_sessions) < 2:
+                    continue
+                # Детерминированно: первый (по имени) сохраняет прокси, остальных разводим —
+                # так все 3 процесса группы приходят к одному решению без координации.
+                for session in sorted(_sessions)[1:]:
+                    if _GROUP is not None and _stable_group(session) != _GROUP:
+                        continue  # чужой аккаунт — разведёт тот процесс, которому он принадлежит
+                    acc = accs_map.get(session)
+                    if not acc:
+                        continue
+                    old_proxy = acc.get("proxy")
+                    if not old_proxy or (old_proxy[1], old_proxy[2], old_proxy[4]) != _key:
+                        continue  # уже развели на предыдущем цикле
+                    spare = _claim_spare_proxy(session)
+                    if not spare:
+                        log.warning(f"[dedup-proxy] {session[-12:]}: дублирует прокси {_key[0]} с другим аккаунтом, резервов нет")
+                        tg_alert(f"⚠️ {session[-12:]}: дублирует прокси с другим аккаунтом — свободных прокси нет, нужна ручная замена")
+                        continue
+                    log.info(f"[dedup-proxy] {session[-12:]}: дублировал {_key[0]} с другим аккаунтом → резерв {spare[1]}")
+                    acc["proxy"] = spare
+                    try:
+                        _af = OUTREACH_DIR / "accounts.json"
+                        _accs_f = json.loads(_af.read_text())
+                        for _a2 in _accs_f:
+                            if _a2["session"] == session:
+                                _a2["proxy"] = spare
+                                break
+                        _af.write_text(json.dumps(_accs_f, ensure_ascii=False, indent=2))
+                    except Exception as _fe:
+                        log.warning(f"[dedup-proxy] не удалось сохранить accounts.json: {_fe}")
+                    if session in clients:
+                        cl, _ = clients.pop(session)
+                        try: await cl.disconnect()
+                        except Exception: pass
+                        await asyncio.sleep(8)
+                        await connect_one({**acc, "proxy": spare})
+
+            await asyncio.sleep(1800)
 
     async def session_backup_loop():
         """Ежедневный бэкап session-файлов в sessions_backup/."""
@@ -2393,6 +2525,7 @@ async def main():
             await asyncio.sleep(86400)
 
     await asyncio.gather(
+        startup_connect_all(),
         scheduler(),
         keepalive(),
         sync_loop(),
@@ -2402,6 +2535,7 @@ async def main():
         *([poll_operator()] if _GROUP in (None, 0) else []),  # только одна группа поллит оператор-бот
         poll_pending_sends(),  # все группы обрабатывают отложенные отправки
         proxy_health_loop(),
+        duplicate_proxy_loop(),
         session_backup_loop(),
     )
 
