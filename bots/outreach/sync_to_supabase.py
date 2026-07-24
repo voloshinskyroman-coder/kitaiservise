@@ -131,7 +131,11 @@ async def fetch_name_and_avatar(acc_cfg: dict) -> tuple:
     try:
         from telethon import TelegramClient
         session = acc_cfg["session"]
-        client = TelegramClient(str(OUTREACH_DIR / session), acc_cfg["api_id"], acc_cfg["api_hash"])
+        proxy_arg = tuple(acc_cfg["proxy"]) if acc_cfg.get("proxy") else None
+        if proxy_arg is None:
+            print(f"[sync] {session}: нет прокси — пропускаю подтяжку профиля")
+            return None, None
+        client = TelegramClient(str(OUTREACH_DIR / session), acc_cfg["api_id"], acc_cfg["api_hash"], proxy=proxy_arg)
         await client.connect()
         me = await client.get_me()
         name = (me.first_name or "").strip()

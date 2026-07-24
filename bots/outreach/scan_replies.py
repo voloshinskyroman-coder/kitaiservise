@@ -57,10 +57,15 @@ async def scan_account(acc_cfg: dict, contacts_by_tg_id: dict, contacts_by_uname
         print(f"  [{session}] нет session файла — пропускаю")
         return 0
 
+    proxy_arg = tuple(acc_cfg["proxy"]) if acc_cfg.get("proxy") else None
+    if proxy_arg is None:
+        print(f"  [{session}] нет прокси — пропускаю")
+        return 0
+
     tmp_session = tmp_dir / session
     shutil.copy2(str(orig), str(tmp_session) + ".session")
 
-    client = TelegramClient(str(tmp_session), acc_cfg["api_id"], acc_cfg["api_hash"])
+    client = TelegramClient(str(tmp_session), acc_cfg["api_id"], acc_cfg["api_hash"], proxy=proxy_arg)
     found = 0
     try:
         await client.connect()
