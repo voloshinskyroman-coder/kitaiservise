@@ -229,7 +229,10 @@ def classify_sentiment(history: list) -> tuple[str, str] | None:
 
 def sync_reply_sentiment(conn):
     """Классифицирует реакцию ответивших контактов через LLM (полный контекст переписки),
-    не больше SENTIMENT_BATCH_LIMIT за цикл. Результат кэшируется в Supabase — считаем один раз."""
+    не больше SENTIMENT_BATCH_LIMIT за цикл. sentiment_msg_count хранит, сколько сообщений
+    было учтено в последней оценке — как только переписка отросла дальше этого числа
+    (новый ответ клиента или менеджера), контакт снова попадает в кандидаты на переоценку,
+    вместо того чтобы кэшироваться навсегда по первому сообщению."""
     if not LLM_API_KEY:
         return
     # status='eq.replied' раньше пропускал тех, кого после ответа перевели в другой статус
@@ -238,16 +241,31 @@ def sync_reply_sentiment(conn):
     # так что лишних вызовов LLM это не добавляет — только чуть шире кандидатский список.
     status, body = supabase_req(
         "GET", "/rest/v1/outreach_contacts",
-        params="?select=id&status=neq.new&sentiment=is.null&limit=" + str(SENTIMENT_BATCH_LIMIT)
+        params="?select=id,sentiment_msg_count&status=neq.new"
     )
     if status != 200:
         return
-    pending = json.loads(body)
+    known_counts = {row["id"]: row.get("sentiment_msg_count") or 0 for row in json.loads(body)}
+    if not known_counts:
+        return
+
+    actual = {}
+    for r in conn.execute(
+        "SELECT contact_id, COUNT(*) AS cnt, MAX(id) AS last_id FROM messages "
+        "WHERE text IS NOT NULL GROUP BY contact_id"
+    ).fetchall():
+        actual[r["contact_id"]] = (r["cnt"], r["last_id"])
+
+    # Кандидаты — где реальных сообщений больше, чем учтено в последней оценке.
+    # Сортируем по last_id (свежая переписка) — за один цикл берём не больше лимита.
+    pending = [cid for cid, known in known_counts.items() if actual.get(cid, (0, 0))[0] > known]
+    pending.sort(key=lambda cid: actual[cid][1], reverse=True)
+    pending = pending[:SENTIMENT_BATCH_LIMIT]
     if not pending:
         return
-    print(f"[sentiment] классифицирую {len(pending)} ответивших контактов...")
-    for row in pending:
-        contact_id = row["id"]
+
+    print(f"[sentiment] (пере)оцениваю {len(pending)} контактов...")
+    for contact_id in pending:
         history = conn.execute(
             "SELECT direction, text FROM messages WHERE contact_id=? AND text IS NOT NULL ORDER BY id ASC",
             (contact_id,)
@@ -259,7 +277,7 @@ def sync_reply_sentiment(conn):
             continue
         sentiment, reason = result
         supabase_req("PATCH", "/rest/v1/outreach_contacts",
-                     data={"sentiment": sentiment, "sentiment_reason": reason},
+                     data={"sentiment": sentiment, "sentiment_reason": reason, "sentiment_msg_count": len(history)},
                      params=f"?id=eq.{contact_id}")
     print(f"[sentiment] готово")
 
