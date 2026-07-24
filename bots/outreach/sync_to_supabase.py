@@ -237,11 +237,13 @@ def sync_reply_sentiment(conn):
         return
     # status='eq.replied' раньше пропускал тех, кого после ответа перевели в другой статус
     # (например 'skipped' — оператор закрыл диалог) — они навсегда оставались без sentiment,
-    # хотя реально отвечали. history всё равно пуст для тех, кто не писал (см. continue ниже),
-    # так что лишних вызовов LLM это не добавляет — только чуть шире кандидатский список.
+    # хотя реально отвечали. status!='new' был неверной заменой: под него попадают и обычные
+    # 'sent'-контакты без единого ответа (история непуста — там исходящее сообщение менеджера),
+    # и они забивали лимит цикла впереди реально ответивших. replied_at IS NOT NULL — тот же
+    # сигнал "отвечал ли когда-либо", что уже используется в дашборде и в счётчиках ниже.
     status, body = supabase_req(
         "GET", "/rest/v1/outreach_contacts",
-        params="?select=id,sentiment_msg_count&status=neq.new"
+        params="?select=id,sentiment_msg_count&replied_at=not.is.null"
     )
     if status != 200:
         return
